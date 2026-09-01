@@ -27,8 +27,11 @@ mod_precheck() {
     esac
 
     # --- 1. Базовая идентификация ---
-    meta "os_id"            "$(. /etc/os-release 2>/dev/null && echo "${ID:-}")"
-    meta "os_version_id"    "$(. /etc/os-release 2>/dev/null && echo "${VERSION_ID:-}")"
+    # ⚠ Всюду ниже читается корень ХОСТА: в контейнере свой /etc/os-release описывает
+    # ОБРАЗ, и паспорт называл бы Debian 13 на машине с Ubuntu (поймано приёмкой
+    # 01.09.2026). Механизм HOST_ROOT уже используется выше для host.os_* и os_check.
+    meta "os_id"            "$(. "${HOST_ROOT:-/}/etc/os-release" 2>/dev/null && echo "${ID:-}")"
+    meta "os_version_id"    "$(. "${HOST_ROOT:-/}/etc/os-release" 2>/dev/null && echo "${VERSION_ID:-}")"
     meta "schema_version"   "$SCHEMA_VERSION"
     meta "tool_version"     "$VPSBENCH_VERSION"
     meta "vantage"          "$VANTAGE"
@@ -39,7 +42,7 @@ mod_precheck() {
     meta "started_utc"      "$(ts_utc)"
     meta "package_sha256"   "$PACKAGE_SHA"   # B5 — идентичность КОДА между точками
     meta "config_sha256"    "${CONFIG_SHA:--}" # конфигурация целей; её различие законно
-    meta "os"               "$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")"
+    meta "os"               "$(. "${HOST_ROOT:-/}/etc/os-release" 2>/dev/null && echo "$PRETTY_NAME")"
     meta "kernel"           "$(uname -r)"
     meta "arch"             "$(uname -m)"
     meta "privilege"        "$PRIVILEGE"

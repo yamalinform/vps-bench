@@ -45,7 +45,13 @@ mod_cpu_general() {
         measure "A2.7z.compress"   "MIPS" 7z "$zv" "b -mmt1, рейтинг сжатия"  "$n" -- _7z 1 compress
         measure "A2.7z.decompress" "MIPS" 7z "$zv" "b -mmt1, рейтинг распаковки" "$n" -- _7z 1 decompress
     else
-        metric_row "A2.7z" "ПРОПУЩЕН (depth=quick)" - - 0 "MIPS" "7z/$zv" "b -mmt1"
+        # ⚠ Пометка ставится на ОБА ключа реестра, а не на общий «A2.7z», которого
+        # в реестре нет. Иначе строки в отчёте остаются пустыми и попадают в раздел
+        # «Что не измерено» с формулировкой «метрика не снималась» — то есть
+        # намеренный пропуск выглядит точно так же, как настоящий отказ измерителя
+        # (поймано приёмкой 01.09.2026). Причина есть, а до читателя не доходит.
+        metric_row "A2.7z.compress"   "ПРОПУЩЕН (depth=quick)" - - 0 "MIPS" "7z/$zv" "b -mmt1"
+        metric_row "A2.7z.decompress" "ПРОПУЩЕН (depth=quick)" - - 0 "MIPS" "7z/$zv" "b -mmt1"
     fi
 
     conditions_snapshot "cpu-general:после"

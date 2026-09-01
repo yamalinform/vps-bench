@@ -17,6 +17,14 @@ curl -fsSL https://raw.githubusercontent.com/yamalinform/vps-bench/main/run.sh -
 The script asks for the parameters it needs in the terminal. A quick test takes 5 to 10
 minutes depending on the CPU, a full one about 40 minutes.
 
+⚠️ **Over SSH, use `--detach`.** Otherwise a dropped connection kills the whole run and
+forty minutes of work are gone. With that flag the run goes to the background and its
+progress is written to `~/vpsbench-detached.log`:
+
+```bash
+bash run.sh --detach --yes --install-docker yes --depth full --vantage "my-vps-1"
+```
+
 ## How it works
 
 * **Docker as the environment.** All the tools run inside a container. If Docker is not
@@ -84,6 +92,7 @@ Main flags:
 * `--impact bench|observe`: full load, or a gentle mode for a server that is in service;
 * `--no-network`: skip the measurement to the second machine (public endpoints are still measured);
 * `--install-docker yes|no`: whether to install Docker automatically;
+* `--detach`: run in the background and return the prompt immediately;
 * `--update yes|no` / `--reboot yes|no`: whether to upgrade or reboot the OS (default is `no`).
 
 If there is no terminal and no flag is given, the safe answer is taken and the script

@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vpsbench — паспорта площадок</title>
+<style>
+body{margin:0;
+--bg:oklch(0.967 0.004 240);--sur:#fff;--sur2:oklch(0.943 0.005 240);--tx:oklch(0.25 0.014 255);--tx2:oklch(0.45 0.014 255);--tx3:oklch(0.6 0.012 255);--line:oklch(0.9 0.006 240);--acc:oklch(0.52 0.1 215);--accbg:oklch(0.93 0.03 215);--bar:oklch(0.62 0.09 215);--amb:oklch(0.55 0.11 70);--ambbg:oklch(0.94 0.05 85);--red:oklch(0.55 0.15 25);--redbg:oklch(0.94 0.04 25);--okc:oklch(0.54 0.09 155);--okbg:oklch(0.94 0.04 155);
+--c1:oklch(0.52 0.1 300);--c1bg:oklch(0.93 0.035 300);--c2:oklch(0.52 0.1 200);--c2bg:oklch(0.93 0.035 200);--c3:oklch(0.52 0.1 340);--c3bg:oklch(0.93 0.035 340);--c4:oklch(0.52 0.1 258);--c4bg:oklch(0.93 0.035 258);--c5:oklch(0.52 0.09 178);--c5bg:oklch(0.93 0.035 178);--c6:oklch(0.52 0.1 318);--c6bg:oklch(0.93 0.035 318);
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+body[data-theme="dark"]{--bg:oklch(0.165 0.012 255);--sur:oklch(0.205 0.013 255);--sur2:oklch(0.25 0.014 255);--tx:oklch(0.9 0.006 250);--tx2:oklch(0.7 0.01 250);--tx3:oklch(0.55 0.012 250);--line:oklch(0.29 0.014 255);--acc:oklch(0.76 0.09 215);--accbg:oklch(0.29 0.045 215);--bar:oklch(0.62 0.1 215);--amb:oklch(0.78 0.11 80);--ambbg:oklch(0.29 0.05 80);--red:oklch(0.72 0.13 25);--redbg:oklch(0.28 0.05 25);--okc:oklch(0.74 0.09 155);--okbg:oklch(0.27 0.045 155);
+--c1:oklch(0.72 0.11 300);--c1bg:oklch(0.28 0.05 300);--c2:oklch(0.72 0.11 200);--c2bg:oklch(0.28 0.05 200);--c3:oklch(0.72 0.11 340);--c3bg:oklch(0.28 0.05 340);--c4:oklch(0.72 0.11 258);--c4bg:oklch(0.28 0.05 258);--c5:oklch(0.72 0.1 178);--c5bg:oklch(0.28 0.05 178);--c6:oklch(0.72 0.11 318);--c6bg:oklch(0.28 0.05 318)}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+input,button,select{font:inherit;color:inherit}
+details>summary{cursor:pointer;color:var(--acc);font-size:12px}
+.nav-a{padding:4px 8px;border-radius:5px;color:var(--tx2);display:block}
+.nav-a:hover{background:var(--sur2);color:var(--tx);text-decoration:none}
+.btn{font:500 12px system-ui,sans-serif;color:var(--tx2);background:var(--sur2);border:1px solid var(--line);border-radius:20px;padding:5px 12px;cursor:pointer}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn[aria-pressed="true"]{border-color:var(--acc);color:var(--acc);background:var(--accbg)}
+.rowh:hover{background:var(--sur2)}
+.tbl{width:100%;border-collapse:collapse}
+h2{margin:0;font-size:12.5px;letter-spacing:0.04em;text-transform:uppercase;color:var(--tx2)}
+.sec{background:var(--sur);border:1px solid var(--line);border-radius:10px;scroll-margin-top:64px}
+.card{background:var(--sur);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.cap{font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--tx3)}
+.swatch{display:inline-block;width:8px;height:8px;border-radius:2px;vertical-align:-1px}
+@media print{[data-noprint]{display:none!important}body{--bg:#fff;--sur:#fff;--sur2:#f0f0f0;--tx:#000;--tx2:#333;--tx3:#555;--line:#ccc}main{max-width:none!important}}
+@media(max-width:860px){nav[data-side]{display:none!important}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script id="vpsbench-data" type="application/json">__VPSBENCH_DATA__</script>
+<script>
+"use strict";
+(function () {
+var DATA = JSON.parse(document.getElementById("vpsbench-data").textContent);
+var RUNS = DATA.runs, TH = DATA.thresholds, MAXC = DATA.maxCompare || 6;
+var BY_ID = {}; RUNS.forEach(function (r) { BY_ID[r.id] = r; });
+
+/* ---------- состояние ---------- */
+var S = {
+  view: "passport",
+  current: RUNS.length ? RUNS[0].id : null,
+  selected: RUNS.slice(0, 2).map(function (r) { return r.id; }),
+  baseline: RUNS.length ? RUNS[0].id : null,
+  theme: "light",
+  q: ""
+};
+try { var t = localStorage.getItem("vpsbench-theme"); if (t) S.theme = t; } catch (e) {}
+
+/* ---------- мелочи ---------- */
+function esc(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function pc(x) { return (Math.max(0, Math.min(100, x))).toFixed(2) + "%"; }
+function colorOf(id) {
+  var i = S.selected.indexOf(id);
+  return "var(--c" + ((i < 0 ? 0 : i) % 6 + 1) + ")";
+}
+function colorBgOf(id) {
+  var i = S.selected.indexOf(id);
+  return "var(--c" + ((i < 0 ? 0 : i) % 6 + 1) + "bg)";
+}
+/* Ниже — правила из утверждённого дизайна (dashboard-design/, buildRows/mkRows).
+   Менять только вместе с дизайном: от них зависит, как читается каждая полоса. */
+function relColor(sp) {                       // цвет процента разброса, паспорт
+  if (sp === null || sp === undefined) return "var(--tx3)";
+  return sp > TH.warn ? "var(--red)" : (sp > TH.ok ? "var(--amb)" : "var(--okc)");
+}
+function sCol(sp) {                           // то же в сравнении: спокойное — без цвета
+  if (sp === null || sp === undefined) return "var(--tx3)";
+  return sp > TH.warn ? "var(--red)" : (sp > TH.ok ? "var(--amb)" : "var(--tx3)");
+}
+function spTxt(sp) {                          // «⚠ ±41.0%» — пометка префиксом
+  if (sp === null || sp === undefined) return "—";
+  return (sp > TH.warn ? "⚠ " : "") + "±" + sp.toFixed(1) + "%";
+}
+function info(sp) {                           // компактный вид для сравнения
+  if (sp === null || sp === undefined) return "";
+  return "±" + (sp % 1 ? sp.toFixed(1) : sp) + "%";
+}
+/* Шкала семейства считается по ВЕРХНЕЙ границе разброса, а не по медиане:
+   иначе насечка размаха вылезает за полосу. */
+function famTop(num, sp) { return num * (1 + (sp || 0) / 100); }
+/* Насечка размаха, зажатая в пределы полосы.
+   Дизайн зажимает верх насечки в 100 %, но при минимальной ширине у самого края
+   сумма «левый край + ширина» всё равно выходила за полосу — здесь левый край
+   дополнительно поджимается. Это устранение вылета, а не смена замысла. */
+function band(num, sp, max, minW) {
+  if (num === null || num === undefined || sp === null || sp === undefined) return ["0%", "0%"];
+  var lo = Math.max(0, num * (1 - sp / 100) / max * 100);
+  var hi = Math.min(100, num * (1 + sp / 100) / max * 100);
+  var w = Math.max(hi - lo, minW);
+  lo = Math.max(0, Math.min(lo, 100 - w));
+  return [lo.toFixed(2) + "%", w.toFixed(2) + "%"];
+}
+function fmtMax(m) {
+  if (m >= 1000) return (m / 1000).toFixed(m % 1000 === 0 ? 0 : 2) + " тыс";
+  return m % 1 ? m.toFixed(1) : String(m);
+}
+function matches(name) { return !S.q || name.toLowerCase().indexOf(S.q) >= 0; }
+
+/* Правило значимости — то же, что в assemble.py::cmp_row: разница считается
+   незначимой, если она меньше худшего разброса пары. Пороги приходят из Python. */
+function compareCell(base, other) {
+  if (base === null || other === null || base.num === null || other.num === null || !base.num) {
+    return { d: null, sig: false, arrow: "", why: "нет пары для сравнения" };
+  }
+  var d = 100 * (other.num - base.num) / Math.abs(base.num);
+  var worst = Math.max(base.sp === null ? 0 : base.sp, other.sp === null ? 0 : other.sp);
+  var sig = Math.abs(d) >= worst;
+  var arrow = "";
+  if (sig && Math.abs(d) >= TH.arrow) {
+    var better = other.dir === "small" ? d < 0 : d > 0;
+    arrow = better ? " ✅" : " 🔻";
+  }
+  return {
+    d: d, sig: sig, arrow: arrow,
+    why: sig ? "" : "разница " + Math.abs(d).toFixed(1) + " % меньше разброса " + worst.toFixed(1) + " % — не значима"
+  };
+}
+
+/* ---------- легенда состояний защиты процессора ---------- */
+var PROTECT_COLOR = {
+  none: ["var(--sur2)", "var(--line)"], on: ["var(--bar)", "transparent"],
+  off: ["var(--red)", "transparent"], unknown: ["var(--tx3)", "transparent"]
+};
+function protectLegend() {
+  return '<details style="margin-top:8px"><summary>Что означают эти состояния</summary>' +
+    '<div style="margin-top:7px;font-size:11.5px;color:var(--tx2);max-width:840px">' +
+    '<table class="tbl" style="font-size:11.5px">' +
+    '<tr style="color:var(--tx3);text-align:left"><th style="padding:3px 8px 3px 0;font-weight:600">Состояние</th>' +
+    '<th style="padding:3px 8px 3px 0;font-weight:600">По-русски</th>' +
+    '<th style="padding:3px 8px 3px 0;font-weight:600">Что это значит</th>' +
+    '<th style="padding:3px 0;font-weight:600">Чем оплачено</th></tr>' +
+    row2("Not affected", "не подвержен", "уязвимости в этом процессоре нет", "защищать нечего, скорость не теряется") +
+    row2("Mitigation: …", "защита включена", "уязвимость есть и закрыта", "закрыта ценой скорости") +
+    row2("Vulnerable", "не защищён", "уязвимость есть, защиты нет", "скорость получена этой ценой") +
+    row2("Unknown: …", "неизвестно", "ядро не смогло определить состояние", "неизвестно — это не «наверное, всё в порядке»") +
+    '</table>' +
+    '<p style="margin:8px 0 0;text-wrap:pretty"><b>«Не подвержен» и «не защищён» одинаково быстры — но по противоположным причинам.</b> ' +
+    'Запись вида <span style="font-family:var(--mono)">Vulnerable: … no microcode</span> означает, что ядро защиту включить пыталось, ' +
+    'но не получило от изготовителя нужного микрокода: это открытая уязвимость, а не её отсутствие. ' +
+    'Поэтому машина с большим числом «не подвержен» выигрывает в скорости не обязательно за счёт железа.</p>' +
+    '<p style="margin:6px 0 0;color:var(--tx3)">Первые три — значения самого ядра Linux ' +
+    '(<span style="font-family:var(--mono)">Documentation/ABI/testing/sysfs-devices-system-cpu</span>). ' +
+    '«Unknown» в этом описании не значится: его добавляют обработчики отдельных уязвимостей, когда определить состояние нельзя — ' +
+    'например, процессор вышел из срока обслуживания изготовителя.</p>' +
+    '</div></details>';
+}
+function row2(a, b, c, d) {
+  return '<tr style="border-top:1px solid var(--line)">' +
+    '<td style="padding:3px 8px 3px 0;font-family:var(--mono);white-space:nowrap">' + esc(a) + '</td>' +
+    '<td style="padding:3px 8px 3px 0;font-weight:600">' + esc(b) + '</td>' +
+    '<td style="padding:3px 8px 3px 0;color:var(--tx2)">' + esc(c) + '</td>' +
+    '<td style="padding:3px 0;color:var(--tx3)">' + esc(d) + '</td></tr>';
+}
+function protectSwatches(withUnknown) {
+  var s = '<span><span class="swatch" style="background:var(--sur2);border:1px solid var(--line)"></span> не подвержен</span>' +
+    '<span><span class="swatch" style="background:var(--bar)"></span> защита включена</span>' +
+    '<span><span class="swatch" style="background:var(--red)"></span> не защищён</span>';
+  if (withUnknown) s += '<span><span class="swatch" style="background:var(--tx3)"></span> неизвестно</span>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:7px;font-size:10.5px;color:var(--tx3)">' + s + '</div>';
+}
+
+/* ---------- шапка ---------- */
+function header() {
+  var isCmp = S.view === "compare";
+  var opts = RUNS.map(function (r) {
+    return '<option value="' + esc(r.id) + '"' + (r.id === S.current ? " selected" : "") + '>' + esc(r.id) + '</option>';
+  }).join("");
+  var inCmp = S.selected.indexOf(S.current) >= 0;
+  var left = isCmp
+    ? '<span style="color:var(--tx3);font-size:12px">сравнение площадок</span>' +
+      '<span style="font:700 15px var(--mono)">' + S.selected.map(function (id) {
+        return '<span style="color:' + colorOf(id) + '">' + esc(id) + '</span>';
+      }).join(' <span style="color:var(--tx3)">⇄</span> ') + '</span>'
+    : '<span style="color:var(--tx3);font-size:12px">паспорт площадки</span>' +
+      '<select id="pick" style="font:700 15px var(--mono);background:var(--sur2);border:1px solid var(--line);border-radius:7px;padding:3px 8px">' + opts + '</select>' +
+      '<button class="btn" id="tog" aria-pressed="' + (inCmp ? "true" : "false") + '">' +
+        (inCmp ? "✓ в сравнении" : "+ в сравнение") + '</button>';
+  var right = isCmp
+    ? '<a href="#" id="toPass" style="font-size:12.5px">← паспорт ' + esc(S.current) + '</a>'
+    : '<a href="#" id="toCmp" style="font-size:12.5px">сравнение (' + S.selected.length + ') →</a>';
+  return '<header data-noprint="1" style="position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:10px 22px;background:var(--sur);border-bottom:1px solid var(--line)">' +
+    '<span style="font:600 12px var(--mono);letter-spacing:0.06em;color:var(--tx2)">vpsbench</span>' + left +
+    '<span style="flex:1"></span>' + right +
+    '<button class="btn" id="theme">' + (S.theme === "dark" ? "◐ тёмная" : "◑ светлая") + '</button>' +
+    '</header>';
+}
+
+/* ---------- боковая навигация ---------- */
+function sidebar(items, withSearch, count) {
+  var search = withSearch
+    ? '<div style="margin-bottom:10px">' +
+      '<input id="q" value="' + esc(S.q) + '" placeholder="Найти показатель…" style="width:100%;box-sizing:border-box;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--sur);font-size:12.5px">' +
+      (S.q ? '<div style="margin-top:5px;font-size:11px;color:var(--tx2)">' + count + ' совпадений</div>' : "") +
+      '</div>'
+    : "";
+  return '<nav data-side data-noprint="1" style="position:sticky;top:56px;width:172px;flex:none;padding:20px 8px 20px 20px;display:flex;flex-direction:column;gap:1px;font-size:12.5px">' +
+    search + items.map(function (i) {
+      return '<a class="nav-a" href="#' + i[1] + '">' + esc(i[0]) + '</a>';
+    }).join("") + '</nav>';
+}
+
+/* ================================================================ ПАСПОРТ */
+
+function metricRows(rows, openKey) {
+  /* Порядок вычислений — как в дизайне: сперва максимум семейства по верхней
+     границе разброса, затем ширины и цвета от него. */
+  var out = [], i, j, scales = [], maxes = [];
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].divider) {
+      var m = 0;
+      for (j = i + 1; j < rows.length && !rows[j].divider; j++) {
+        if (rows[j].num !== null) m = Math.max(m, famTop(rows[j].num, rows[j].sp));
+      }
+      maxes[i] = m; scales[i] = m || 1;
+    } else scales[i] = scales[i - 1] || 1;
+  }
+  for (i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.divider) {
+      var vis = false;
+      for (j = i + 1; j < rows.length && !rows[j].divider; j++) { if (matches(rows[j].n)) vis = true; }
+      if (!vis) continue;
+      out.push('<div style="display:flex;justify-content:space-between;padding:8px 16px 2px;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:var(--tx3)">' +
+        '<span>' + esc(r.label) + '</span><span>шкала до ' + esc(fmtMax(maxes[i])) + '</span></div>');
+      continue;
+    }
+    if (!matches(r.n)) continue;
+    var max = scales[i], na = r.na, sp = r.sp;
+    var wp = na ? 0 : r.num / max * 100;
+    var bd = na ? ["0%", "0%"] : band(r.num, sp, max, 0.6);
+    var barC = (sp !== null && sp > TH.warn)
+      ? "color-mix(in oklab, var(--red) 45%, var(--sur2))"
+      : "color-mix(in oklab, var(--bar) 75%, var(--sur2))";
+    var bandC = (sp !== null && sp > TH.warn) ? "var(--red)"
+      : (sp !== null && sp > TH.ok) ? "var(--amb)"
+      : "color-mix(in oklab, var(--bar) 60%, var(--tx))";
+    var track = '<div style="position:relative;height:15px;border-radius:3px;background:' +
+      (na ? "transparent" : "var(--sur2)") + ';border:' + (na ? "1px dashed var(--line)" : "none") + '">' +
+      (na ? '<span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);font:10px var(--mono);color:var(--tx3)">' + esc(na) + '</span>'
+          : '<div style="position:absolute;left:0;top:0;bottom:0;width:' + wp.toFixed(2) + '%;background:' + barC + ';border-radius:3px"></div>' +
+            '<div style="position:absolute;top:3px;bottom:3px;left:' + bd[0] + ';width:' + bd[1] + ';background:' + bandC + ';border-radius:2px"></div>') +
+      '</div>';
+    var open = openKey === r.k && !na;
+    out.push('<div class="rowh" data-key="' + esc(r.k) + '" title="' + esc(na ? r.n : "Чем измерено: " + r.tool + " · клик — детали") + '" style="cursor:pointer">' +
+      '<div style="display:grid;grid-template-columns:minmax(168px,215px) 1fr 128px 74px;gap:12px;align-items:center;padding:5px 16px">' +
+        '<div style="font-size:12px;color:var(--tx2)">' + esc(r.n) + '</div>' + track +
+        '<div style="text-align:right"><span style="font:650 13.5px var(--mono)">' + esc(na ? "—" : r.v) + '</span> ' +
+          '<span style="font-size:10.5px;color:var(--tx3)">' + esc(na ? "" : r.u) + '</span></div>' +
+        '<div style="text-align:right;font:10.5px var(--mono);color:' + relColor(sp) + '">' + esc(na ? "" : spTxt(sp)) + '</div>' +
+      '</div>' +
+      (open ? '<div style="padding:2px 16px 8px;font-size:11px;color:var(--tx3)">' +
+        '<div style="font-family:var(--mono);color:var(--tx2)">$ ' + esc(r.tool) + ' <span style="color:var(--tx3)">' + esc(r.args) + '</span></div>' +
+        (r.note ? '<div style="margin-top:2px;text-wrap:pretty">' + esc(r.note) + '</div>' : "") +
+        '</div>' : "") +
+      '</div>');
+  }
+  return out.join("");
+}
+
+function passport(run) {
+  var nav = [["Сводка", "s-summary"], ["Машина", "s-host"], ["Защита процессора", "s-protect"]];
+  run.groups.forEach(function (gr) { nav.push([gr.title.replace(/^Процессор · /, "ЦП: "), gr.id]); });
+  run.net.forEach(function (n, i) { nav.push(["Сеть · " + n.target, "s-net-" + i]); });
+  nav.push(["Фризы", "s-stalls"], ["Не измерено", "s-nm"], ["Следы · запуск", "s-repro"]);
+
+  var count = 0;
+  run.groups.concat(run.net).forEach(function (gr) {
+    gr.rows.forEach(function (r) { if (!r.divider && matches(r.n)) count++; });
+  });
+
+  var c = run.cards;
+  var body = [];
+
+  body.push('<section class="sec" style="padding:14px 18px;display:flex;flex-wrap:wrap;gap:8px 22px;align-items:baseline">' +
+    '<span style="font:700 22px var(--mono)">' + esc(run.id) + '</span>' +
+    '<span style="font-size:14px;color:var(--tx2)">' + esc(run.headline) + '</span>' +
+    '<span style="flex:1"></span>' +
+    '<span style="font:11.5px var(--mono);color:var(--tx3)">' + esc(run.meta) + '</span></section>');
+
+  body.push('<section id="s-summary" style="scroll-margin-top:64px">' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:8px">' +
+    run.summary.map(function (t) {
+      var ring = t.sp === null ? "var(--sur2)"
+        : "conic-gradient(" + relColor(t.sp) + " " + Math.min(t.sp, 50) / 50 * 100 + "%, var(--sur2) 0)";
+      return '<div class="card" title="' + esc(t.tip) + '" style="display:flex;flex-direction:column;gap:5px">' +
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
+          '<span style="font-size:11.5px;color:var(--tx2);min-height:30px">' + esc(t.l) + '</span>' +
+          '<span style="width:22px;height:22px;flex:none;border-radius:50%;background:' + ring + ';display:grid;place-items:center">' +
+          '<span style="width:13px;height:13px;border-radius:50%;background:var(--sur)"></span></span></div>' +
+        '<div><span style="font:650 25px/1 var(--mono);letter-spacing:-0.02em">' + esc(t.v) + '</span> ' +
+          '<span style="font-size:11.5px;color:var(--tx3)">' + esc(t.u) + '</span></div>' +
+        '<div style="font-size:11px;color:' + t.relColor + '">' + esc(t.rel) + '</div></div>';
+    }).join("") + '</div>' +
+    '<p style="margin:8px 2px 0;font-size:11px;color:var(--tx3);max-width:820px">Кольцо — разброс между повторами: ' +
+    '<b style="color:var(--okc)">до ' + TH.ok + ' %</b> устойчиво · <b style="color:var(--amb)">до ' + TH.warn + ' %</b> с разбросом · ' +
+    '<b style="color:var(--red)">больше</b> — ненадёжно, медиана не характеристика площадки. Это устойчивость числа, а не качество машины.</p></section>');
+
+  body.push('<section id="s-host" style="scroll-margin-top:64px">' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(186px,1fr));gap:8px">' +
+      card("Процессор", c.cpu.model, c.cpu.sub,
+        '<div style="font-size:11px;color:var(--tx3);margin-top:4px" title="' + esc(c.cpu.yearFull + " — год выхода поколения, а не дата выпуска этого экземпляра") + '">поколение: ' + esc(c.cpu.year) + '</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">' + c.cpu.flags.map(function (f) {
+          return '<span style="font-size:10.5px;padding:2px 7px;border-radius:4px;font-weight:600;background:' +
+            (f.on ? "var(--accbg)" : "var(--sur2)") + ';color:' + (f.on ? "var(--acc)" : "var(--tx3)") + '">' + esc(f.t) + '</span>';
+        }).join("") + '</div>') +
+      card("Память", c.mem.total, c.mem.sub,
+        '<div style="height:7px;border-radius:4px;background:var(--sur2);margin-top:9px;overflow:hidden">' +
+        '<div style="height:100%;width:' + c.mem.pct + '%;background:var(--bar);border-radius:4px"></div></div>' +
+        '<div style="font-size:11px;color:var(--tx3);margin-top:5px">' + esc(c.mem.foot) + '</div>') +
+      card("Виртуализация", c.virt.kind, c.virt.sub,
+        '<div style="font-size:11px;color:var(--tx3);margin-top:8px">лимиты ЦП и памяти: <span style="font-style:italic">' + esc(c.virt.limits) + '</span></div>') +
+      card("Система", c.os.name, c.os.sub,
+        '<div style="font-size:11px;color:var(--tx3);margin-top:8px">' + esc(c.os.foot) + '</div>') +
+      card("Условия прогона", "%steal " + c.cond.steal, c.cond.calm ? "соседи не влияли" : "соседи заметны",
+        '<div style="display:flex;align-items:flex-end;gap:3px;height:26px;margin-top:8px">' + c.cond.bars.map(function (b) {
+          return '<div title="' + esc(b.tip) + '" style="flex:1;background:var(--bar);opacity:0.75;border-radius:2px 2px 0 0;height:' + b.h + '"></div>';
+        }).join("") + '</div><div style="font-size:10px;color:var(--tx3);margin-top:3px">load1 по модулям, до и после</div>',
+        c.cond.calm ? "var(--okc)" : "var(--amb)") +
+    '</div>' +
+    '<details style="margin:8px 2px 0"><summary>Все факты о машине и прогоне (' + run.hostFacts.length + ' позиций реестра)</summary>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:0 18px;margin-top:8px;background:var(--sur);border:1px solid var(--line);border-radius:10px;padding:6px 16px 12px">' +
+    run.hostFacts.map(function (f) {
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid var(--line);font-size:12px">' +
+        '<span style="color:var(--tx2)">' + esc(f.k) + '</span>' +
+        '<span style="font-family:var(--mono);text-align:right;overflow-wrap:anywhere;color:' + (f.dim ? "var(--tx3)" : "var(--tx)") + '">' + esc(f.v) + '</span></div>';
+    }).join("") + '</div></details></section>');
+
+  var p = run.protect;
+  body.push('<section id="s-protect" class="sec" style="padding:13px 16px 14px">' +
+    '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px">' +
+    '<h2>Защита процессора от уязвимостей</h2>' +
+    '<span style="font-size:12px"><b style="color:var(--acc)">' + p.counts.on + '</b> <span style="color:var(--tx3)">защит включено</span> · ' +
+    '<b style="color:var(--red)">' + p.counts.off + '</b> <span style="color:var(--tx3)">не закрыто</span> · ' +
+    '<b style="color:var(--tx3)">' + p.counts.none + ' не подвержен · ' + p.counts.total + ' позиций</b></span></div>' +
+    '<div style="display:flex;gap:3px;margin-top:10px">' + p.cells.map(function (m) {
+      var col = PROTECT_COLOR[m.c];
+      return '<div title="' + esc(m.n + " — " + m.h + " (" + m.s + ")") + '" style="flex:1;height:30px;border-radius:4px;background:' + col[0] + ';border:1px solid ' + col[1] + '"></div>';
+    }).join("") + '</div>' + protectSwatches(p.counts.unknown > 0) +
+    '<div style="margin-top:10px;display:flex;flex-direction:column;gap:3px">' + p.cells.filter(function (m) { return m.c !== "none"; }).map(function (m) {
+      return '<div style="display:grid;grid-template-columns:220px 1fr;gap:10px;font-size:11.5px">' +
+        '<span style="font-family:var(--mono);color:' + (m.c === "off" ? "var(--red)" : "var(--acc)") + '">' + esc(m.n) + '</span>' +
+        '<span style="color:var(--tx3)">' + esc(m.s) + '</span></div>';
+    }).join("") + '</div>' +
+    '<details style="margin-top:8px"><summary>Все ' + p.counts.total + ' позиций</summary><div style="margin-top:6px;display:flex;flex-direction:column;gap:2px">' +
+    p.cells.map(function (m) {
+      return '<div style="display:grid;grid-template-columns:220px 1fr;gap:10px;font-size:11.5px;padding:2px 0;border-bottom:1px solid var(--line)">' +
+        '<span style="font-family:var(--mono);color:var(--tx2)">' + esc(m.n) + '</span><span style="color:var(--tx3)">' + esc(m.s) + '</span></div>';
+    }).join("") + '</div></details>' + protectLegend() + '</section>');
+
+  run.groups.forEach(function (gr) {
+    body.push('<section id="' + gr.id + '" class="sec" style="padding:13px 0 8px">' +
+      '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:0 16px 6px">' +
+      '<h2>' + esc(gr.title) + '</h2>' + (gr.desc ? '<span style="font-size:11px;color:var(--tx3)">' + esc(gr.desc) + '</span>' : "") + '</div>' +
+      (gr.banner ? '<div style="margin:2px 16px 8px;padding:8px 12px;border:1px solid var(--amb);background:var(--ambbg);border-radius:7px;font-size:12px;text-wrap:pretty">' + esc(gr.banner) + '</div>' : "") +
+      '<div style="display:flex;flex-direction:column">' + metricRows(gr.rows, S.open) + '</div></section>');
+  });
+
+  run.net.forEach(function (n, i) {
+    var cost = "";
+    if (n.cost) {
+      cost = '<div style="margin:8px 16px 6px;padding:8px 12px;background:var(--sur2);border-radius:7px;font-size:11.5px;color:var(--tx2);text-wrap:pretty">' +
+        '<b style="color:var(--tx)">Цена шифрования: ' + (n.cost.significant ? "значима" : "не значима") + '.</b> ' +
+        esc(n.cost.tls) + ' против ' + esc(n.cost.plain) + ' без шифрования — разница ' +
+        (n.cost.d >= 0 ? "+" : "") + n.cost.d.toFixed(0) + ' % ' +
+        (n.cost.significant ? "превышает разброс ±" + n.cost.worst.toFixed(0) + " % и значима."
+          : "меньше разброса ±" + n.cost.worst.toFixed(0) + " %: теряется в шуме.") + '</div>';
+    }
+    body.push('<section id="s-net-' + i + '" class="sec" style="padding:13px 0 8px">' +
+      '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:0 16px 6px">' +
+      '<h2>Сеть · цель «' + esc(n.target) + '»</h2>' +
+      '<span style="font-size:11px;color:var(--tx3)">' + (n.measured ? "агент достижим: " + esc(n.reachable) + " · порты " + esc(n.ports) : "") + '</span></div>' +
+      (n.measured ? "" : '<div style="margin:2px 16px 8px;padding:8px 12px;border:1px solid var(--amb);background:var(--ambbg);border-radius:7px;font-size:12px;text-wrap:pretty">' +
+        'Сетевой замер не выполнялся. Раздел остаётся целиком: все позиции реестра на месте с причиной отсутствия — паспорта сопоставимы позиция-в-позицию.</div>') +
+      '<div style="display:flex;flex-direction:column">' + metricRows(n.rows, S.open) + '</div>' + cost + '</section>');
+  });
+
+  var st = run.stalls;
+  body.push('<section id="s-stalls" class="sec" style="padding:13px 16px 12px">' +
+    '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 12px"><h2>Фризы в передаче</h2>' +
+    (st.measured ? '<span style="font-size:12px"><b style="color:' + (st.events ? "var(--red)" : "var(--okc)") + '">' +
+      st.events + ' фризов</b> <span style="color:var(--tx3)">в ' + st.count + ' сериях · полосы — медианная скорость серии</span></span>' : "") + '</div>' +
+    (st.measured
+      ? '<div style="display:flex;flex-direction:column;gap:3px;margin-top:10px">' + st.series.map(function (s) {
+          return '<div style="display:grid;grid-template-columns:210px 1fr 92px 100px;gap:12px;align-items:center">' +
+            '<span style="font:10.5px var(--mono);color:var(--tx3);overflow-wrap:anywhere">' + esc(s.f) + '</span>' +
+            '<div style="height:11px;border-radius:3px;background:var(--sur2);position:relative">' +
+            '<div style="position:absolute;left:0;top:0;bottom:0;width:' + s.w + ';background:var(--bar);opacity:0.8;border-radius:3px"></div></div>' +
+            '<span style="font:11.5px var(--mono);text-align:right">' + esc(s.min) + '</span>' +
+            '<span style="font-size:10.5px;text-align:right;color:' + (s.n ? "var(--red)" : "var(--okc)") + '">' + s.n + ' фризов</span></div>';
+        }).join("") + '</div>' +
+        '<div style="margin-top:10px;padding:8px 12px;border:1px solid var(--amb);background:var(--ambbg);border-radius:7px;font-size:11.5px;text-wrap:pretty">' +
+        '⚠ <b>Порог унаследован и не откалиброван</b> для плеча до собственной ноды — он задавался под закачку из интернета. ' +
+        'Данные для калибровки: секунд ниже 1 / 5 / 10 % медианы серии — <b>' + st.calib["1"] + " · " + st.calib["5"] + " · " + st.calib["10"] + '</b> суммарно по всем сериям.</div>'
+      : '<div style="margin-top:8px;padding:8px 12px;border:1px dashed var(--tx3);border-radius:7px;font-size:12px;color:var(--tx2)">Серии не записаны — сетевой замер не выполнялся.</div>') +
+    '</section>');
+
+  body.push('<section id="s-nm" class="sec" style="padding:13px 16px">' +
+    '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 12px"><h2>Что не измерено</h2>' +
+    '<span style="font-size:11px;color:var(--tx3)">«не показано» означает «не измерено», а не «этого нет». Сбоев разбора: ' + esc(run.parseFailures) + '</span></div>' +
+    (run.notMeasured.length
+      ? '<div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">' + run.notMeasured.map(function (m) {
+          return '<div style="display:flex;align-items:center;gap:10px;font-size:12.5px">' +
+            '<span style="min-width:260px">' + esc(m.what) + '</span>' +
+            '<span style="font:11px var(--mono);padding:2px 7px;border:1px dashed var(--tx3);border-radius:4px;color:var(--tx2)">' + esc(m.why) + '</span></div>';
+        }).join("") + '</div>'
+      : '<div style="margin-top:6px;font-size:12.5px;color:var(--okc)">Всё, что предусмотрено реестром, измерено.</div>') + '</section>');
+
+  body.push('<section id="s-repro" class="sec" style="padding:13px 16px">' +
+    '<div style="display:flex;flex-wrap:wrap;gap:8px 24px;align-items:baseline"><h2>Следы и воспроизведение</h2>' +
+    '<span style="font-size:12px;color:var(--tx2)">установлено пакетов: <b>' + run.traces.installed + '</b> · служб отключено: <b>' + esc(run.traces.disabled) + '</b> · ' +
+    'базовый срез: <b>' + esc(run.traces.baseline) + '</b>, переиспользован: ' + esc(run.traces.reused) + '</span></div>' +
+    '<div style="font:12px var(--mono);padding:8px 12px;background:var(--sur2);border-radius:7px;margin-top:9px">$ ' + esc(run.repro.cmd) + '</div>' +
+    '<div style="font-size:11px;color:var(--tx3);margin-top:6px">Сырьё: <span style="font-family:var(--mono)">' + esc(run.repro.raw) + '/</span> — отчёт пересобирается из него в любой момент. ' +
+    'Снятие инструмента: <span style="font-family:var(--mono)">--uninstall</span> → <span style="font-family:var(--mono)">--verify-clean</span>.</div></section>');
+
+  return '<div style="display:flex;max-width:1240px;margin:0 auto;align-items:flex-start">' + sidebar(nav, true, count) +
+    '<main style="flex:1;min-width:0;max-width:1010px;padding:20px 22px 60px 14px;display:flex;flex-direction:column;gap:14px">' +
+    body.join("") + '</main></div>';
+}
+
+function card(cap, big, sub, extra, bigColor) {
+  return '<div class="card"><div class="cap">' + esc(cap) + '</div>' +
+    '<div style="font:650 15px var(--mono);margin:4px 0 2px' + (bigColor ? ";color:" + bigColor : "") + '">' + esc(big) + '</div>' +
+    '<div style="font-size:11.5px;color:var(--tx2)">' + esc(sub) + '</div>' + (extra || "") + '</div>';
+}
+
+/* ================================================================ СРАВНЕНИЕ */
+
+function picker() {
+  return '<section class="sec" id="c-pick" data-noprint="1" style="padding:11px 15px">' +
+    '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px">' +
+    '<h2>Площадки в сравнении</h2>' +
+    '<span style="font-size:11px;color:var(--tx3)">опорная — та, относительно которой считается разница</span></div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:9px">' + RUNS.map(function (r) {
+      var on = S.selected.indexOf(r.id) >= 0;
+      var base = S.baseline === r.id;
+      return '<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid ' + (on ? colorOf(r.id) : "var(--line)") +
+        ';background:' + (on ? colorBgOf(r.id) : "transparent") + ';border-radius:20px;padding:3px 5px 3px 11px">' +
+        '<button class="btn" data-sel="' + esc(r.id) + '" style="border:none;background:none;padding:0;font:600 12.5px var(--mono);color:' + (on ? colorOf(r.id) : "var(--tx2)") + '">' +
+        (on ? "✓ " : "+ ") + esc(r.id) + '</button>' +
+        (on ? '<button class="btn" data-base="' + esc(r.id) + '" style="padding:2px 8px;font-size:10.5px;border-radius:14px' +
+          (base ? ";border-color:var(--acc);color:var(--acc);background:var(--accbg)" : "") + '">' + (base ? "опорная" : "сделать опорной") + '</button>' : "") +
+        '</span>';
+    }).join("") + '</div>' +
+    (S.selected.length > MAXC ? '<div style="margin-top:9px;padding:8px 12px;border:1px solid var(--amb);background:var(--ambbg);border-radius:7px;font-size:11.5px">' +
+      '⚠ Выбрано ' + S.selected.length + ' площадок. Полосы в строке рассчитаны на ' + MAXC + ' — дальше они становятся нечитаемыми. ' +
+      'Ничего не скрыто, но сравнение лучше разбить на несколько.</div>' : "") +
+    '</section>';
+}
+
+function cmpBars(rows, sel, baseId) {
+  /* Шкала семейства — по верхней границе разброса среди ВСЕХ выбранных.
+     Приглушение и цвет победителя — правило дизайна (mkRows). */
+  var out = [], i, j, scales = [];
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].divider) {
+      var m = 0;
+      for (j = i + 1; j < rows.length && !rows[j].divider; j++) {
+        var key = rows[j].k;
+        sel.forEach(function (id) {
+          var rr = rowOf(id, key);
+          if (rr && rr.num !== null) m = Math.max(m, famTop(rr.num, rr.sp));
+        });
+      }
+      scales[i] = m || 1;
+    } else scales[i] = scales[i - 1] || 1;
+  }
+  for (i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (row.divider) {
+      var vis = false;
+      for (j = i + 1; j < rows.length && !rows[j].divider; j++) { if (matches(rows[j].n)) vis = true; }
+      if (!vis) continue;
+      out.push('<div style="padding:9px 16px 3px;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:var(--tx3)">' + esc(row.label) + '</div>');
+      continue;
+    }
+    if (!matches(row.n)) continue;
+    var max = scales[i], base = rowOf(baseId, row.k);
+    /* Сначала — все сравнения к опорной: от них зависит и приглушение опорной. */
+    var cmps = {}, anySig = false, baseLoses = false;
+    sel.forEach(function (id) {
+      if (id === baseId) return;
+      var c = compareCell(base, rowOf(id, row.k));
+      cmps[id] = c;
+      if (c.d !== null && c.sig) {
+        anySig = true;
+        var otherBetter = (rowOf(id, row.k).dir === "small") ? c.d < 0 : c.d > 0;
+        if (otherBetter) baseLoses = true;
+      }
+    });
+    var vals = [], bars = [], deltas = [];
+    sel.forEach(function (id) {
+      var r = rowOf(id, row.k), col = colorOf(id);
+      if (!r || r.num === null) {
+        vals.push('<div style="font:650 12px var(--mono);color:' + col + '">—</div>');
+        bars.push('<div style="position:relative;height:10px;border-radius:3px;background:var(--sur2)">' +
+          '<span style="position:absolute;left:8px;top:-1px;font:9.5px var(--mono);color:var(--tx3)">' + esc(r ? r.na : "нет данных") + '</span></div>');
+        if (id !== baseId) deltas.push('<div style="font:650 12px var(--mono);color:var(--tx3)">—</div>');
+        return;
+      }
+      var op;
+      if (id === baseId) op = baseLoses ? 0.35 : (anySig ? 0.95 : 0.3);
+      else {
+        var c = cmps[id];
+        if (c.d === null) op = 0.55;
+        else if (!c.sig) op = 0.3;
+        else op = ((r.dir === "small") ? c.d < 0 : c.d > 0) ? 0.95 : 0.35;
+      }
+      vals.push('<div style="font:650 12px var(--mono);color:' + col + '">' + esc(r.v) + ' ' +
+        '<span style="font:9.5px var(--mono);color:' + sCol(r.sp) + '">' + esc(info(r.sp)) + '</span></div>');
+      var bd = band(r.num, r.sp, max, 0.8);
+      bars.push('<div title="' + esc(id) + '" style="position:relative;height:10px;border-radius:3px;background:var(--sur2)">' +
+        '<div style="position:absolute;left:0;top:0;bottom:0;width:' + (r.num / max * 100).toFixed(2) + '%;background:' + col + ';border-radius:3px;opacity:' + op + '"></div>' +
+        '<div style="position:absolute;top:3px;bottom:3px;left:' + bd[0] + ';width:' + bd[1] + ';background:var(--tx);opacity:0.4;border-radius:2px"></div></div>');
+      if (id !== baseId) {
+        var c2 = cmps[id];
+        /* Цвет разницы — цвет ПОБЕДИТЕЛЯ пары, как в дизайне (vc в mkRows). */
+        var vc = "var(--tx3)";
+        if (c2.d !== null && c2.sig) {
+          var otherWins = (r.dir === "small") ? c2.d < 0 : c2.d > 0;
+          vc = otherWins ? col : colorOf(baseId);
+        }
+        deltas.push('<div style="font:650 12px var(--mono);color:' + vc + '" title="' + esc(c2.why) + '">' +
+          (c2.d === null ? "—" : (c2.d >= 0 ? "+" : "") + c2.d.toFixed(1) + " %" + c2.arrow) + '</div>');
+      }
+    });
+    var verdict = "";
+    if (sel.length === 2) {
+      var otherId = sel[0] === baseId ? sel[1] : sel[0];
+      var c3 = cmps[otherId], orow = rowOf(otherId, row.k), vtxt, vcol = "var(--tx3)";
+      if (c3.d === null) vtxt = c3.why || "нет пары";
+      else if (!c3.sig) vtxt = "≈ шум";
+      else {
+        var win = ((orow.dir === "small") ? c3.d < 0 : c3.d > 0) ? otherId : baseId;
+        vtxt = "значимо · " + win; vcol = colorOf(win);
+      }
+      verdict = '<div style="font-size:9.5px;color:' + vcol + ';text-wrap:balance">' + esc(vtxt) + '</div>';
+    }
+    out.push('<div class="rowh" title="' + esc(row.note || row.n) + '" style="display:grid;grid-template-columns:minmax(150px,190px) 118px 1fr 104px;gap:12px;align-items:center;padding:4px 16px">' +
+      '<div style="font-size:12px;color:var(--tx2)">' + esc(row.n) + '</div>' +
+      '<div style="text-align:right;line-height:1.35">' + vals.join("") + '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px">' + bars.join("") + '</div>' +
+      '<div style="text-align:right;line-height:1.35">' + deltas.join("") + verdict + '</div></div>');
+  }
+  return out.join("");
+}
+
+function rowOf(id, key) {
+  var run = BY_ID[id], found = null;
+  run.groups.concat(run.net).forEach(function (gr) {
+    gr.rows.forEach(function (r) { if (!r.divider && r.k === key) found = r; });
+  });
+  return found;
+}
+
+function compare() {
+  var sel = S.selected.filter(function (id) { return BY_ID[id]; });
+  if (sel.length < 2) {
+    return '<div style="max-width:900px;margin:0 auto;padding:40px 22px">' + picker() +
+      '<section class="sec" style="padding:16px 18px;margin-top:14px;font-size:13px;color:var(--tx2)">' +
+      'Для сравнения нужно выбрать хотя бы две площадки. Сейчас выбрано: ' + sel.length + '. ' +
+      'Паспорт каждой площадки при этом доступен и полон.</section></div>';
+  }
+  var baseId = sel.indexOf(S.baseline) >= 0 ? S.baseline : sel[0];
+  var base = BY_ID[baseId];
+  var nav = [["Сопоставимость", "c-comp"], ["Площадки", "c-pick"], ["Машины", "c-host"], ["Защита процессора", "c-protect"]];
+  base.groups.forEach(function (gr) { nav.push([gr.title.replace(/^Процессор · /, "ЦП: "), "c-" + gr.id]); });
+  nav.push(["Сеть", "c-net"], ["Как читать", "c-how"]);
+
+  var body = [], i;
+
+  var fps = {};
+  sel.forEach(function (id) { fps[BY_ID[id].codeFp] = true; });
+  var same = Object.keys(fps).length === 1;
+  body.push('<section id="c-comp" style="scroll-margin-top:64px;display:flex;flex-direction:column;gap:6px">' +
+    (same
+      ? '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:9px 14px;border:1px solid var(--okc);background:var(--okbg);border-radius:9px;font-size:12.5px">' +
+        '<span style="font-weight:600;color:var(--okc)">✓ Сравнивать можно</span>' +
+        '<span style="color:var(--tx2)">отпечаток кода <span style="font-family:var(--mono)">' + esc(base.codeFp.slice(0, 8)) + '…</span> совпадает у всех выбранных — числа сравнимы напрямую</span></div>'
+      : '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:9px 14px;border:1px solid var(--red);background:var(--redbg);border-radius:9px;font-size:12.5px">' +
+        '<span style="font-weight:600;color:var(--red)">✕ Сравнивать нельзя напрямую</span>' +
+        '<span style="color:var(--tx2)">отпечатки кода разошлись: ' + sel.map(function (id) {
+          return esc(id) + ' <span style="font-family:var(--mono)">' + esc((BY_ID[id].codeFp || "—").slice(0, 8)) + '…</span>';
+        }).join(" · ") + ' — прогоны сняты разными версиями инструмента. Числа показаны, разницы вычисляются, но их надо читать с этой поправкой.</span></div>') +
+    '<div style="font-size:11px;color:var(--tx3);padding:0 2px">ℹ Отпечаток целей у разных площадок различается законно: каждая машина целится в другую, методику это не меняет.</div></section>');
+
+  body.push(picker());
+
+  var kernels = {};
+  sel.forEach(function (id) { kernels[BY_ID[id].kernel] = true; });
+  body.push('<section id="c-host" style="scroll-margin-top:64px">' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">' + sel.map(function (id) {
+      var r = BY_ID[id];
+      return '<div class="card" style="border-top:3px solid ' + colorOf(id) + '">' +
+        '<div style="font:700 17px var(--mono);color:' + colorOf(id) + '">' + esc(id) + (id === baseId ? ' <span style="font-size:10px;color:var(--tx3)">опорная</span>' : "") + '</div>' +
+        '<div style="font-size:12px;color:var(--tx2);margin-top:2px">' + esc(r.headline) + '</div></div>';
+    }).join("") + '</div>' +
+    '<div class="sec" style="margin-top:8px;padding:10px 16px 12px">' +
+    (Object.keys(kernels).length > 1
+      ? '<div style="padding:8px 12px;border:1px solid var(--amb);background:var(--ambbg);border-radius:7px;font-size:11.5px;text-wrap:pretty">' +
+        '⚠ <b>Ядра различаются</b> (' + Object.keys(kernels).map(function (k) { return '<span style="font-family:var(--mono)">' + esc(k) + '</span>'; }).join(" ↔ ") + ') — ' +
+        'это влияет на процессорные показатели: версия ядра задаёт состав включённых защит, а они и составляют заметную часть разрыва. ' +
+        '«Процессор быстрее» здесь означает «площадка в поставке хостера быстрее», а не «железо быстрее».</div>'
+      : "") +
+    hostDiff(sel) + '</div></section>');
+
+  body.push(protectCompare(sel));
+
+  base.groups.forEach(function (gr) {
+    body.push('<section id="c-' + gr.id + '" class="sec" style="padding:13px 0 8px">' +
+      '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 12px;padding:0 16px 2px">' +
+      '<h2>' + esc(gr.title) + '</h2>' + (gr.desc ? '<span style="font-size:11px;color:var(--tx3)">' + esc(gr.desc) + '</span>' : "") + '</div>' +
+      cmpHead(sel, baseId, "полосы от общего нуля, общая шкала · насечка — размах повторов") +
+      '<div style="display:flex;flex-direction:column">' + cmpBars(gr.rows, sel, baseId) + '</div></section>');
+  });
+
+  var netRows = (base.net[0] || { rows: [] }).rows;
+  body.push('<section id="c-net" class="sec" style="padding:13px 0 8px">' +
+    '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 12px;padding:0 16px 4px">' +
+    '<h2>Сеть</h2><span style="font-size:11px;color:var(--tx3)">у каждой площадки своя цель — это разные плечи, а не один канал; ' +
+    'поэтому пометок «лучше/хуже» здесь нет</span></div>' +
+    '<div style="margin:2px 16px 8px;display:flex;flex-wrap:wrap;gap:6px">' + sel.map(function (id) {
+      var n = BY_ID[id].net[0];
+      return '<span style="padding:4px 11px;border:1px solid ' + colorOf(id) + ';color:' + colorOf(id) +
+        ';border-radius:7px;background:' + colorBgOf(id) + ';font:11.5px var(--mono)">' + esc(id) + ' → ' + esc(n ? n.target : "—") + '</span>';
+    }).join("") + '</div>' +
+    cmpHead(sel, baseId, "полосы от общего нуля · разные плечи") +
+    '<div style="display:flex;flex-direction:column">' + cmpBarsNet(netRows, sel) + '</div>' +
+    '<div style="margin:8px 16px 6px;padding:8px 12px;background:var(--sur2);border-radius:7px;font-size:11.5px;color:var(--tx2);text-wrap:pretty">' +
+    '<b style="color:var(--tx)">Задержка — свойство плеча, а не площадки.</b> Скорости различаться могут: маршрут и политика оператора несимметричны. ' +
+    'Сравнивать эти строки как «качество площадки» нельзя.</div></section>');
+
+  body.push('<section id="c-how" class="sec" style="padding:12px 16px 13px">' +
+    '<h2>Как это читать</h2>' +
+    '<p style="margin:5px 0 0;font-size:12px;color:var(--tx2);max-width:840px;text-wrap:pretty">' +
+    'Полосы каждой строки растут от общего нуля в одной шкале — длины сравниваются напрямую. Разница считается относительно ' +
+    '<b style="color:' + colorOf(baseId) + '">' + esc(baseId) + '</b>: опорную можно переключить в разделе «Площадки». ' +
+    'Когда различие меньше разброса самих повторов, полосы приглушены и стрелка не ставится — это шум, а не результат. ' +
+    'Тёмная насечка — размах min–max между повторами. Площадки редко «лучше» целиком: для VPN-ноды смотрите профиль ноды и канал, ' +
+    'диск важен настолько, насколько пишутся логи. <b style="color:var(--tx)">Вывод делает человек.</b></p></section>');
+
+  var count = 0;
+  base.groups.forEach(function (gr) { gr.rows.forEach(function (r) { if (!r.divider && matches(r.n)) count++; }); });
+  return '<div style="display:flex;max-width:1240px;margin:0 auto;align-items:flex-start">' + sidebar(nav, true, count) +
+    '<main style="flex:1;min-width:0;max-width:1030px;padding:20px 22px 60px 14px;display:flex;flex-direction:column;gap:14px">' +
+    body.join("") + '</main></div>';
+}
+
+function cmpHead(sel, baseId, hint) {
+  return '<div style="display:grid;grid-template-columns:minmax(150px,190px) 118px 1fr 104px;gap:12px;padding:6px 16px 2px;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:var(--tx3);align-items:end">' +
+    '<span></span><span style="text-align:right">' + sel.map(function (id) {
+      return '<b style="color:' + colorOf(id) + '">' + esc(id) + '</b>';
+    }).join(" / ") + '</span><span>' + esc(hint) + '</span>' +
+    '<span style="text-align:right">' + (baseId ? "разница к " + esc(baseId) : "") + '</span></div>';
+}
+
+function cmpBarsNet(rows, sel) {
+  var out = [], i, j;
+  for (i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (row.divider) continue;
+    if (!matches(row.n)) continue;
+    /* Шкала — по верхней границе разброса, как и везде: иначе насечка вылезает. */
+    var max = 0;
+    sel.forEach(function (id) {
+      var n = BY_ID[id].net[0];
+      if (!n) return;
+      n.rows.forEach(function (r) {
+        if (!r.divider && tail(r.k) === tail(row.k) && r.num !== null) max = Math.max(max, famTop(r.num, r.sp));
+      });
+    });
+    max = max || 1;
+    var vals = [], bars = [];
+    sel.forEach(function (id) {
+      var n = BY_ID[id].net[0], col = colorOf(id), r = null;
+      if (n) n.rows.forEach(function (x) { if (!x.divider && tail(x.k) === tail(row.k)) r = x; });
+      if (!r || r.num === null) {
+        vals.push('<div style="font:650 12px var(--mono);color:' + col + '">—</div>');
+        bars.push('<div style="position:relative;height:10px;border-radius:3px;background:var(--sur2)">' +
+          '<span style="position:absolute;left:8px;top:-1px;font:9.5px var(--mono);color:var(--tx3)">' + esc(r ? r.na : "нет данных") + '</span></div>');
+        return;
+      }
+      vals.push('<div style="font:650 12px var(--mono);color:' + col + '">' + esc(r.v) + ' <span style="font:9.5px var(--mono);color:' + sCol(r.sp) + '">' + esc(info(r.sp)) + '</span></div>');
+      var bd = band(r.num, r.sp, max, 0.8);
+      bars.push('<div title="' + esc(id) + '" style="position:relative;height:10px;border-radius:3px;background:var(--sur2)">' +
+        '<div style="position:absolute;left:0;top:0;bottom:0;width:' + (r.num / max * 100).toFixed(2) + '%;background:' + col + ';border-radius:3px;opacity:0.6"></div>' +
+        '<div style="position:absolute;top:3px;bottom:3px;left:' + bd[0] + ';width:' + bd[1] + ';background:var(--tx);opacity:0.35;border-radius:2px"></div></div>');
+    });
+    out.push('<div class="rowh" style="display:grid;grid-template-columns:minmax(150px,190px) 118px 1fr 104px;gap:12px;align-items:center;padding:4px 16px">' +
+      '<div style="font-size:12px;color:var(--tx2)">' + esc(row.n) + '</div>' +
+      '<div style="text-align:right;line-height:1.35">' + vals.join("") + '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px">' + bars.join("") + '</div>' +
+      '<div style="text-align:right;font-size:9.5px;color:var(--tx3)">разные плечи</div></div>');
+  }
+  return out.join("");
+}
+function tail(key) { var p = String(key).split("."); return p[p.length - 1]; }
+
+function hostDiff(sel) {
+  var base = BY_ID[sel[0]], rows = [], diff = 0;
+  base.hostFacts.forEach(function (f, i) {
+    var vals = sel.map(function (id) { var g = BY_ID[id].hostFacts[i]; return g ? g.v : "—"; });
+    var same = vals.every(function (v) { return v === vals[0]; });
+    if (!same) diff++;
+    rows.push({ k: f.k, vals: vals, same: same });
+  });
+  var cols = "minmax(180px,1.2fr)" + sel.map(function () { return " 1fr"; }).join("");
+  function line(r) {
+    return '<div style="display:grid;grid-template-columns:' + cols + ';gap:12px;align-items:baseline;padding:3px 6px;border-top:1px solid var(--line);font-size:12px;' +
+      (r.same ? "" : "background:var(--ambbg);border-radius:4px") + '">' +
+      '<span style="color:var(--tx2)">' + (r.same ? "" : "● ") + esc(r.k) + '</span>' +
+      r.vals.map(function (v) { return '<span style="font-family:var(--mono);overflow-wrap:anywhere">' + esc(v) + '</span>'; }).join("") + '</div>';
+  }
+  var head = '<div style="display:grid;grid-template-columns:' + cols + ';gap:12px;padding:3px 6px;font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--tx3)">' +
+    '<span>Параметр</span>' + sel.map(function (id) { return '<span style="color:' + colorOf(id) + '">' + esc(id) + '</span>'; }).join("") + '</div>';
+  return '<div style="margin-top:10px;font-size:12px;color:var(--tx2)">Различаются <b>' + diff + '</b> из <b>' + rows.length + '</b> позиций реестра фактов.</div>' +
+    '<div style="margin-top:6px">' + head + rows.filter(function (r) { return !r.same; }).map(line).join("") + '</div>' +
+    '<details style="margin-top:8px"><summary>Показать и совпадающие позиции (' + (rows.length - diff) + ')</summary>' +
+    '<div style="margin-top:6px">' + head + rows.filter(function (r) { return r.same; }).map(line).join("") + '</div></details>';
+}
+
+function protectCompare(sel) {
+  var order = DATA.vulnOrder;
+  var diffIdx = [];
+  order.forEach(function (name, i) {
+    var states = sel.map(function (id) { return BY_ID[id].protect.cells[i].c; });
+    if (!states.every(function (s) { return s === states[0]; })) diffIdx.push(i);
+  });
+  var ribbons = sel.map(function (id) {
+    var p = BY_ID[id].protect;
+    return '<span style="font:600 11px var(--mono);color:' + colorOf(id) + ';text-align:right">' + esc(id) + '</span>' +
+      '<div style="display:flex;gap:3px">' + p.cells.map(function (m) {
+        var col = PROTECT_COLOR[m.c];
+        return '<div title="' + esc(m.n + " — " + m.h + " (" + m.s + ")") + '" style="flex:1;height:24px;border-radius:4px;background:' + col[0] + ';border:1px solid ' + col[1] + '"></div>';
+      }).join("") + '</div>';
+  }).join("");
+  var marks = '<span></span><div style="display:flex;gap:3px">' + order.map(function (n, i) {
+    return '<div style="flex:1;text-align:center;font-size:10px;color:var(--amb)">' + (diffIdx.indexOf(i) >= 0 ? "●" : "") + '</div>';
+  }).join("") + '</div>';
+  var counts = sel.map(function (id) {
+    var c = BY_ID[id].protect.counts;
+    return '<b style="color:' + colorOf(id) + '">' + esc(id) + '</b>: ' + c.on + ' включено, ' + c.off + ' не закрыто, ' + c.none + ' не подвержен';
+  }).join(" · ");
+  var cols = "minmax(160px,0.8fr)" + sel.map(function () { return " 1fr"; }).join("");
+  var all = order.map(function (n, i) {
+    var d = diffIdx.indexOf(i) >= 0;
+    return '<div style="display:grid;grid-template-columns:' + cols + ';gap:12px;padding:3px 6px;border-top:1px solid var(--line);font-size:11px;' +
+      (d ? "background:var(--ambbg);border-radius:4px" : "") + '">' +
+      '<span style="font-family:var(--mono);color:var(--tx2)">' + (d ? "● " : "") + esc(n) + '</span>' +
+      sel.map(function (id) { return '<span style="color:var(--tx3)">' + esc(BY_ID[id].protect.cells[i].s) + '</span>'; }).join("") + '</div>';
+  }).join("");
+  return '<section id="c-protect" class="sec" style="padding:13px 16px">' +
+    '<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 12px"><h2>Защита процессора от уязвимостей</h2>' +
+    '<span style="font-size:12px"><b style="color:var(--amb)">различий ' + diffIdx.length + ' из ' + order.length + '</b> ' +
+    '<span style="color:var(--tx3)">· неочевидная причина разрыва в скорости: включённые защиты стоят производительности</span></span></div>' +
+    '<div style="display:grid;grid-template-columns:74px 1fr;gap:6px 10px;margin-top:10px;align-items:center">' + ribbons + marks + '</div>' +
+    protectSwatches(true) +
+    '<div style="margin-top:8px;font-size:12px;color:var(--tx2)">' + counts + '</div>' +
+    '<details style="margin-top:7px"><summary>Все ' + order.length + ' позиций с полными состояниями</summary><div style="margin-top:6px">' + all + '</div></details>' +
+    protectLegend() + '</section>';
+}
+
+/* ================================================================ каркас */
+
+function render() {
+  document.body.dataset.theme = S.theme;
+  var run = BY_ID[S.current] || RUNS[0];
+  var bad = "";
+  if (DATA.bad && DATA.bad.length) {
+    bad = '<div style="max-width:1240px;margin:10px auto 0;padding:0 22px"><div style="padding:8px 12px;border:1px solid var(--red);background:var(--redbg);border-radius:8px;font-size:12px">' +
+      '<b>Непригодные файлы (' + DATA.bad.length + '):</b> ' + DATA.bad.map(function (b) {
+        return esc(b.file) + " — " + esc(b.why);
+      }).join(" · ") + '</div></div>';
+  }
+  document.getElementById("app").innerHTML = header() + bad + (S.view === "compare" ? compare() : passport(run));
+  wire();
+}
+
+function wire() {
+  var el;
+  if ((el = document.getElementById("theme"))) el.onclick = function () {
+    S.theme = S.theme === "dark" ? "light" : "dark";
+    try { localStorage.setItem("vpsbench-theme", S.theme); } catch (e) {}
+    render();
+  };
+  if ((el = document.getElementById("pick"))) el.onchange = function () { S.current = this.value; render(); };
+  if ((el = document.getElementById("tog"))) el.onclick = function () {
+    var i = S.selected.indexOf(S.current);
+    if (i >= 0) S.selected.splice(i, 1); else S.selected.push(S.current);
+    if (S.selected.indexOf(S.baseline) < 0) S.baseline = S.selected[0] || null;
+    render();
+  };
+  if ((el = document.getElementById("toCmp"))) el.onclick = function (e) { e.preventDefault(); S.view = "compare"; render(); };
+  if ((el = document.getElementById("toPass"))) el.onclick = function (e) { e.preventDefault(); S.view = "passport"; render(); };
+  if ((el = document.getElementById("q"))) {
+    el.oninput = function () { S.q = this.value.trim().toLowerCase(); render(); var q = document.getElementById("q"); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-sel]"), function (b) {
+    b.onclick = function () {
+      var id = this.getAttribute("data-sel"), i = S.selected.indexOf(id);
+      if (i >= 0) S.selected.splice(i, 1); else S.selected.push(id);
+      if (S.selected.indexOf(S.baseline) < 0) S.baseline = S.selected[0] || null;
+      render();
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-base]"), function (b) {
+    b.onclick = function () { S.baseline = this.getAttribute("data-base"); render(); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-key]"), function (d) {
+    d.onclick = function () {
+      var k = this.getAttribute("data-key");
+      S.open = S.open === k ? null : k;
+      render();
+    };
+  });
+}
+
+if (!RUNS.length) {
+  document.getElementById("app").innerHTML =
+    '<div style="padding:40px 22px;font-size:14px">Ни одного пригодного прогона не найдено.</div>';
+} else {
+  render();
+}
+})();
+</script>
+</body>
+</html>

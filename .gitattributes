@@ -1,0 +1,18 @@
+# Переводы строк — ТОЛЬКО LF, на всех платформах и при любых настройках клиента.
+#
+# ⚠ Это не косметика. Файл .sh с CRLF на Linux не запускается вовсе: интерпретатор
+# читает строку "#!/usr/bin/env bash\r" и ищет программу с возвратом каретки в имени.
+# Git на Windows по умолчанию подставляет CRLF в рабочую копию, и без этого файла
+# любой, кто клонирует репозиторий на Windows и запустит скрипт на сервере,
+# получит неработающий инструмент.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.conf text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.txt  text eol=lf
+*.html text eol=lf
+Dockerfile  text eol=lf
+.dockerignore text eol=lf

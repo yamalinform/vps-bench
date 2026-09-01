@@ -1,0 +1,180 @@
+{
+ "version": {
+  "irtt": "0.9.0",
+  "protocol": 1,
+  "json_format": 1
+ },
+ "system_info": {
+  "os": "linux",
+  "cpus": 1,
+  "go_version": "go1.24.4",
+  "hostname": "miracle"
+ },
+ "config": {
+  "local_address": "198.51.100.10:56753",
+  "remote_address": "203.0.113.20:2112",
+  "open_timeouts": "1s,2s,4s,8s",
+  "params": {
+   "proto_version": 1,
+   "duration": 2000000000,
+   "interval": 20000000,
+   "length": 60,
+   "received_stats": "both",
+   "stamp_at": "both",
+   "clock": "both",
+   "dscp": 0,
+   "server_fill": ""
+  },
+  "loose": false,
+  "ip_version": "IPv4",
+  "df": 0,
+  "ttl": 0,
+  "timer": "comp",
+  "waiter": "3x4s",
+  "filler": "rand",
+  "fill_one": false,
+  "server_fill": "",
+  "thread_lock": false,
+  "supplied": {
+   "local_address": ":0",
+   "remote_address": "203.0.113.20:2112",
+   "open_timeouts": "1s,2s,4s,8s",
+   "params": {
+    "proto_version": 1,
+    "duration": 2000000000,
+    "interval": 20000000,
+    "length": 0,
+    "received_stats": "both",
+    "stamp_at": "both",
+    "clock": "both",
+    "dscp": 0,
+    "server_fill": ""
+   },
+   "loose": false,
+   "ip_version": "IPv4+6",
+   "df": 0,
+   "ttl": 0,
+   "timer": "comp",
+   "waiter": "3x4s",
+   "filler": "rand",
+   "fill_one": false,
+   "server_fill": "",
+   "thread_lock": false
+  }
+ },
+ "stats": {
+  "start_time": "2026-08-29T09:02:49.962986516Z",
+  "send_call": {
+   "total": 1900762,
+   "n": 100,
+   "min": 13480,
+   "max": 50201,
+   "mean": 19007,
+   "stddev": 5366,
+   "variance": 28798975
+  },
+  "timer_error": {
+   "total": 20442,
+   "n": 99,
+   "min": 4,
+   "max": 1490,
+   "mean": 206,
+   "stddev": 184,
+   "variance": 33998
+  },
+  "rtt": {
+   "total": 1786119576,
+   "n": 100,
+   "min": 17682843,
+   "max": 18127111,
+   "mean": 17861195,
+   "median": 17846292,
+   "stddev": 100252,
+   "variance": 10050523525
+  },
+  "send_delay": {
+   "total": 731716259,
+   "n": 100,
+   "min": 7183411,
+   "max": 7506289,
+   "mean": 7317162,
+   "median": 7313742,
+   "stddev": 65338,
+   "variance": 4269157285
+  },
+  "receive_delay": {
+   "total": 1054398724,
+   "n": 100,
+   "min": 10440308,
+   "max": 10747102,
+   "mean": 10543987,
+   "median": 10536239,
+   "stddev": 64856,
+   "variance": 4206395819
+  },
+  "server_packets_received": 100,
+  "bytes_sent": 6000,
+  "bytes_received": 6000,
+  "duplicates": 0,
+  "late_packets": 0,
+  "wait": 54381333,
+  "duration": 2035822801,
+  "packets_sent": 100,
+  "packets_received": 100,
+  "packet_loss_percent": 0,
+  "upstream_loss_percent": 0,
+  "downstream_loss_percent": 0,
+  "duplicate_percent": 0,
+  "late_packets_percent": 0,
+  "ipdv_send": {
+   "total": 6660473,
+   "n": 99,
+   "min": 290,
+   "max": 236885,
+   "mean": 67277,
+   "median": 58680,
+   "stddev": 50757,
+   "variance": 2576316976
+  },
+  "ipdv_receive": {
+   "total": 6547175,
+   "n": 99,
+   "min": 417,
+   "max": 264319,
+   "mean": 66133,
+   "median": 46273,
+   "stddev": 63580,
+   "variance": 4042417383
+  },
+  "ipdv_round_trip": {
+   "total": 10256282,
+   "n": 99,
+   "min": 1652,
+   "max": 329456,
+   "mean": 103598,
+   "median": 77415,
+   "stddev": 82960,
+   "variance": 6882366186
+  },
+  "server_processing_time": {
+   "total": 1568831,
+   "n": 100,
+   "min": 10953,
+   "max": 59582,
+   "mean": 15688,
+   "stddev": 5206,
+   "variance": 27110144
+  },
+  "timer_err_percent": 0.00103,
+  "timer_misses": 0,
+  "timer_miss_percent": 0,
+  "send_rate": {
+   "bps": 24234,
+   "string": "24.2 Kbps"
+  },
+  "receive_rate": {
+   "bps": 24234,
+   "string": "24.2 Kbps"
+  }
+ }
+}

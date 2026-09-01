@@ -1,0 +1,5 @@
+
+--- /root/fx/d (ext4 /dev/sda1 9.76 GiB) ioping statistics ---
+4 requests completed in 1.85 ms, 16 KiB read, 2.16 k iops, 8.46 MiB/s
+generated 5 requests in 4.00 s, 20 KiB, 1 iops, 5.00 KiB/s
+min/avg/max/mdev = 426.0 us / 461.9 us / 512.2 us / 36.1 us

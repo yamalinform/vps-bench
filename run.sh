@@ -1,0 +1,672 @@
+#!/usr/bin/env bash
+# run.sh — пользовательский вход vpsbench.
+#
+# Что делает: проверяет машину, ставит Docker (если его нет и вы согласны),
+# тянет образ со всеми измерителями, меряет площадку, кладёт готовый паспорт
+# в папку и убирает за собой.
+#
+# На машине НЕ появляется ни одного пакета измерителей и ни одного файла кода:
+# весь инструмент живёт внутри образа. После уборки остаются только отчёты
+# и, если вы согласились его поставить, сам Docker.
+#
+# ⚠ Контейнер здесь — способ доставки инструментов, а НЕ песочница: чтобы измерить
+# машину, ему нужны --network host, --privileged и доступ к дискам. Иначе меряется
+# не машина, а контейнер. Если такие права неприемлемы — этот инструмент не подходит.
+set -u
+
+# --- что запускаем -----------------------------------------------------------
+# ⚠ Образ прибит по DIGEST, а не по тегу. Тег переставляется, digest — нет:
+# под тем же тегом через полгода окажется другой образ с другими версиями
+# измерителей, и разница в числах станет необъяснимой.
+IMAGE="ghcr.io/yamalinform/vps-bench@sha256:92005d4e375d65d5b899758d2eb8383b83bf112519c6e4338babbad3da52131a"
+RELEASE_TAG="0.3.2"
+
+# --- состояние сценария ------------------------------------------------------
+# Все ответы имеют безопасное умолчание: щадящий режим, быстрая проверка, без сети.
+VANTAGE=""; IMPACT="bench"; DEPTH="quick"; DEPTH_SET=0; TARGET_LABEL=""; TARGET_ADDR=""
+# ⚠ Наличие /dev/tty в файловой системе НЕ означает, что его можно открыть:
+# при запуске по ssh без терминала путь есть, а открытие падает с
+# «No such device or address» (проверено 31.08.2026). Поэтому проверяем открытием,
+# один раз, а не существованием при каждом вопросе.
+TTY_OK=0; { : </dev/tty; } 2>/dev/null && TTY_OK=1
+ASSUME_RUN=""; ASSUME_DOCKER=""        # "", yes или no — ответ, заданный флагом
+# ⚠ Обновление системы и перезагрузка под общий --yes НЕ попадают: это необратимые
+# действия над чужой машиной, и согласие на замер согласием на них не является.
+ASSUME_UPDATE=""; ASSUME_REBOOT=""
+NO_NETWORK=0; KEEP_IMAGE=0; PURGE=0
+DOCKER_OWNED="нет"                     # ставили ли Docker мы
+REPORT_DIR=""
+UPDATED="нет"; UPGRADE_COUNT=0; KERNEL_NEW=0
+KERNEL_BEFORE="$(uname -r)"
+RESUME_FILE="$HOME/.vpsbench-resume.env"
+SUDO=""; [ "$(id -u)" = "0" ] || SUDO="sudo"
+
+die() { printf '\nrun.sh: %s\n' "$*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+
+usage() {
+    cat <<'EOF'
+vpsbench — оценка потенциала VPS: железо, процессор, память, диск, канал.
+
+  bash run.sh [опции]
+
+Без опций задаёт вопросы сам. Флаги нужны для повторов и неинтерактивного запуска.
+
+  --vantage ИМЯ        метка площадки; попадает в отчёт вместо имени машины
+  --depth quick|full   quick — беглая проверка (~5 мин, ПО УМОЛЧАНИЮ)
+                       full  — приёмка площадки (~35-40 мин, 5 повторов на метрику)
+  --impact observe|bench
+                       bench — полная нагрузка (по умолчанию для свежей машины)
+                       observe — щадящий режим для машины, которая в работе
+  --target МЕТКА:АДРЕС вторая машина с поднятой приёмной стороной (bash run.sh --agent)
+  --no-network         не мерить канал вовсе
+  --yes                отвечать «да» на вопросы о запуске (для неинтерактивного прогона)
+  --install-docker yes|no   ставить ли Docker без вопроса
+  --keep-image         не удалять образ после прогона (пригодится для повторов)
+  --purge              удалить и отчёты тоже
+  --agent              поднять приёмную сторону для замера канала со второй машины
+  --agent-stop         остановить её (если запускали в фоне)
+  --selftest           самопроверка этого скрипта, ничего не меняет
+  -h, --help           эта справка
+EOF
+}
+
+# --- вопрос с безопасным умолчанием ------------------------------------------
+# ⚠ Читаем из /dev/tty, а не из stdin: скрипт может быть запущен так, что stdin
+# занят, и тогда read молча вернул бы пустую строку вместо ответа человека.
+ask() { # <вопрос> <да|нет — умолчание> [<ответ, заданный флагом>]
+    local q="$1" def="$2" forced="${3:-}" ans=""
+    case "$forced" in yes) return 0 ;; no) return 1 ;; esac
+    # ⚠ Приглашения идут в stderr, а не в stdout: askline возвращает ответ
+    # через stdout, и приглашение в том же потоке попало бы в возвращаемое
+    # значение. Здесь то же правило — чтобы вывод скрипта можно было
+    # перенаправлять, не собирая в него вопросы.
+    if [ "$TTY_OK" = "0" ]; then
+        printf '%s — терминала нет, беру безопасный ответ: %s\n' "$q" "$def" >&2
+        [ "$def" = "да" ] && return 0 || return 1
+    fi
+    printf '%s [%s]: ' "$q" "$([ "$def" = да ] && echo 'Д/н' || echo 'д/Н')" >&2
+    read -r ans </dev/tty || ans=""
+    case "$ans" in
+        д|Д|y|Y|да|yes|YES) return 0 ;;
+        н|Н|n|N|нет|no|NO)  return 1 ;;
+        "") [ "$def" = "да" ] && return 0 || return 1 ;;
+        *)  printf 'не понял ответа, беру умолчание: %s\n' "$def" >&2
+            [ "$def" = "да" ] && return 0 || return 1 ;;
+    esac
+}
+
+askline() { # <приглашение> — строка из терминала, пустая допустима
+    local p="$1" v=""
+    [ "$TTY_OK" = "1" ] || { printf '' ; return 0; }
+    printf '%s' "$p" >&2; read -r v </dev/tty || v=""
+    printf '%s' "$v"
+}
+
+# --- разбор аргументов -------------------------------------------------------
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --vantage) VANTAGE="${2:?--vantage требует значения}"; shift 2 ;;
+        --depth)   DEPTH="${2:?}"; DEPTH_SET=1; shift 2 ;;
+        --impact)  IMPACT="${2:?}"; shift 2 ;;
+        --target)  TARGET_LABEL="${2%%:*}"; TARGET_ADDR="${2#*:}"; shift 2 ;;
+        --no-network) NO_NETWORK=1; shift ;;
+        --yes)     ASSUME_RUN="yes"; shift ;;
+        --update)  ASSUME_UPDATE="${2:?}"; shift 2 ;;
+        --reboot)  ASSUME_REBOOT="${2:?}"; shift 2 ;;
+        --install-docker) ASSUME_DOCKER="${2:?}"; shift 2 ;;
+        --keep-image) KEEP_IMAGE=1; shift ;;
+        --purge)   PURGE=1; shift ;;
+        --agent)      ACTION="agent";      shift ;;
+        --agent-stop) ACTION="agent-stop"; shift ;;
+        --selftest) ACTION="selftest"; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) printf 'неизвестный аргумент: %s\n\n' "$1" >&2; usage; exit 2 ;;
+    esac
+done
+case "$DEPTH"  in quick|full)    ;; *) die "--depth: quick|full" ;; esac
+case "$IMPACT" in observe|bench) ;; *) die "--impact: observe|bench" ;; esac
+
+# --- 1. Проверки ДО единого изменения ----------------------------------------
+precheck_env() {
+    [ "$(id -u)" = "0" ] || command -v sudo >/dev/null 2>&1 \
+        || die "нужен root или работающий sudo: Docker и чтение железа требуют прав."
+    case "$(uname -m)" in
+        x86_64) ;;
+        *) die "нужна архитектура x86_64, здесь $(uname -m): образ собран под amd64." ;;
+    esac
+    # Релиз ОС НЕ проверяется: версии измерителей задаёт образ, а не репозитории
+    # машины, поэтому инструмент работает на любом дистрибутиве с Docker.
+    local free_mb
+    free_mb="$(df -Pm / | awk 'NR==2{print $4}')"
+    [ "${free_mb:-0}" -ge 1500 ] \
+        || die "на / свободно ${free_mb} МБ, нужно хотя бы 1500: образ занимает ~190 МБ,
+     плюс место под дисковую пробу и отчёты."
+}
+
+# --- 2. Предупреждение о нагрузке и выбор режима (В-17) ----------------------
+# Определять «работает ли машина» инструмент не пытается: любая такая эвристика
+# ненадёжна и создаёт ложную уверенность. Решение принимает тот, кто знает машину.
+confirm_load() {
+    cat <<'EOF'
+
+────────────────────────────────────────────────────────────────────────
+  ЧТО СЕЙЧАС ПРОИЗОЙДЁТ
+
+  Замер нагружает машину по-настоящему: процессор считается в потолок,
+  диск пишется и читается большими объёмами, сеть забивается в 8 потоков.
+
+  Если машина обслуживает пользователей, они это заметят: просадка
+  скорости, задержки, возможны обрывы соединений.
+
+  Наружу инструмент обращается только сюда:
+    • ghcr.io — образ с измерителями
+    • репозитории вашей же системы — только если придётся ставить Docker
+    • адрес второй машины, если вы его укажете
+  Результаты никуда не выгружаются, телеметрии нет.
+────────────────────────────────────────────────────────────────────────
+EOF
+    if ask "Машина СВОБОДНА и её можно нагружать полностью?" "нет" "$ASSUME_RUN"; then
+        IMPACT="bench"
+        say "  → полная нагрузка"
+    else
+        IMPACT="observe"
+        say "  → щадящий режим: пробы короче и слабее, числа осторожнее"
+    fi
+    ask "Начинать замер?" "да" "$ASSUME_RUN" || die "отменено пользователем."
+}
+
+# --- 2а. Обновление системы -------------------------------------------------
+# Разбор плана обновления идёт по ЯКОРЮ `^Inst `: строки установки в выводе
+# `apt-get -s` начинаются именно так. Итоговая строка «N upgraded» зависит
+# от языка вывода и на локализованной системе не сматчится вовсе.
+apt_plan_count()  { printf '%s\n' "$1" | grep -c '^Inst ' ; }
+apt_plan_kernel() { printf '%s\n' "$1" | grep -c '^Inst linux-image' ; }
+
+offer_update() {
+    # На машине, которую пользователь назвал работающей, обновление не предлагаем:
+    # это вмешательство в чужую production-систему, а мы пришли мерить.
+    [ "$IMPACT" = "bench" ] || return 0
+    command -v apt-get >/dev/null 2>&1 || return 0
+
+    say "смотрю, что можно обновить…"
+    if ! $SUDO apt-get update >/tmp/vpsbench-aptupdate.log 2>&1; then
+        say "⚠ apt-get update завершился с ошибкой. Проблемные источники:"
+        grep -E '^(E|W):' /tmp/vpsbench-aptupdate.log | head -5 | sed 's/^/    /'
+        say "  Обновление пропускается; замер это не блокирует."
+        return 0
+    fi
+    local plan
+    plan="$($SUDO apt-get -s full-upgrade 2>/dev/null)"
+    UPGRADE_COUNT="$(apt_plan_count "$plan")"
+    KERNEL_NEW="$(apt_plan_kernel "$plan")"
+    if [ "$UPGRADE_COUNT" = "0" ]; then
+        say "система уже обновлена в рамках релиза — обновлять нечего"
+        maybe_reboot          # ядро могло приехать раньше и ждать перезагрузки
+        return 0
+    fi
+    say ""
+    say "доступно обновлений: $UPGRADE_COUNT пакет(ов)$([ "$KERNEL_NEW" -gt 0 ] && echo ', включая ЯДРО')"
+    say "⚠ это необратимо: откатывать обновление инструмент не станет и не сможет."
+    say "⚠ если какой-то пакет при настройке задаст вопрос (так делает, например,"
+    say "  grub-pc), обновление прервётся и система останется полуобновлённой —"
+    say "  инструмент об этом скажет и подскажет команду починки, но чинить придётся вам."
+    say "  Зачем это может быть нужно: состав включённых защит процессора задаётся"
+    say "  ядром, и на старом ядре числа будут не те, с которыми машина будет работать."
+    if ! ask "Обновить систему перед замером?" "нет" "$ASSUME_UPDATE"; then
+        maybe_reboot          # отказ от обновления не отменяет уже ждущего ядра
+        return 0
+    fi
+
+    say "обновляю…"
+    if ! DEBIAN_FRONTEND=noninteractive $SUDO apt-get full-upgrade -y \
+         >/tmp/vpsbench-upgrade.log 2>&1; then
+        # ⚠ Самая частая причина — пакет задаёт вопрос в postinst, а в неинтерактивном
+        # режиме отвечать некому: классика — grub-pc спрашивает, на какой диск ставить
+        # загрузчик (ФАКТ, воспроизведено 31.08.2026: install_devices пуст → dpkg
+        # возвращает 1, пакет остаётся в состоянии iF, система полуобновлена).
+        # Называем виновника поимённо: без этого пользователь видит стену вывода apt.
+        local broken
+        broken="$(sed -n '/Errors were encountered while processing/,$p' \
+                    /tmp/vpsbench-upgrade.log \
+                  | grep -oE '^ +[a-z0-9][a-z0-9.+-]*' | tr -d ' ' | tr '\n' ' ')"
+        say ""
+        say "последние строки apt:"; tail -4 /tmp/vpsbench-upgrade.log | sed 's/^/    /'
+        die "обновление не завершилось, система осталась ПОЛУОБНОВЛЁННОЙ.
+     Не настроились пакеты: ${broken:-не удалось определить}
+     Обычная причина: пакет задаёт вопрос при настройке (например, grub-pc спрашивает,
+     на какой диск ставить загрузчик), а отвечать в неинтерактивном режиме некому.
+
+     Починить вручную, отвечая на вопросы:
+         sudo dpkg --configure -a
+     затем запустите инструмент снова.
+
+     Замер на полуобновлённой системе не запускаю: числа были бы сняты в состоянии,
+     которое невозможно ни описать, ни повторить."
+    fi
+    UPDATED="да"
+    maybe_reboot
+}
+
+# Чистая функция сравнения — вынесена, чтобы её можно было проверить тестом.
+kernel_newer_installed() { # <новейшее установленное> <работающее>
+    [ -n "$1" ] && [ "$1" != "$2" ] && printf '%s' "$1"
+    return 0
+}
+
+# ⚠ Смотрим не только на то, что поставил ЭТОТ прогон. Ядро могло приехать раньше —
+# например, от unattended-upgrades, — и тогда машина работает на старом, а после
+# ближайшей перезагрузки пойдёт на новом. Замер, снятый в таком состоянии,
+# описывает не ту машину, которая будет работать (ФАКТ, поймано 31.08.2026:
+# работало 6.12.74 при установленном 6.12.107, а reboot-required уже был снят).
+kernel_pending() {
+    # Источник — файлы /boot/vmlinuz-*, а НЕ список пакетов. Пакетов на одно ядро
+    # бывает несколько (…-amd64 и …-amd64-unsigned), и `sort -V` ставит последним
+    # вариант с суффиксом: инструмент называл бы ядро, которого uname никогда
+    # не покажет (проверено 31.08.2026). Загрузчик грузит именно эти файлы.
+    local newest
+    newest="$(ls /boot/vmlinuz-* 2>/dev/null | sed 's|.*/vmlinuz-||' | sort -V | tail -1)"
+    kernel_newer_installed "$newest" "$(uname -r)"
+}
+
+maybe_reboot() {
+    local need=0 pending
+    pending="$(kernel_pending)"
+    [ -f /var/run/reboot-required ] && need=1
+    [ "${KERNEL_NEW:-0}" -gt 0 ]    && need=1
+    [ -n "$pending" ]               && need=1
+    [ "$need" = "1" ] || return 0
+    cat <<EOF
+
+  Работает ядро $(uname -r)${pending:+, а установлено более новое: $pending}.
+  Состав включённых защит процессора задаётся именно ядром — то есть замер
+  покажет не то состояние, в котором машина будет работать после перезагрузки.
+EOF
+    if ! ask "Перезагрузить сейчас?" "да" "$ASSUME_REBOOT"; then
+        say "  продолжаю на старом ядре; в отчёт это будет записано"
+        return 0
+    fi
+    write_resume
+    cat <<EOF
+
+  Машина будет перезагружена. После неё выполните ЭТУ ЖЕ строку:
+
+      bash $0
+
+  Замер продолжится с того места, где остановился: вопросы задаваться не будут,
+  обновление не повторится.
+EOF
+    # ⛔ Ни systemd-юнита, ни cron для автопродолжения: это постоянный след
+    # на чужой машине ради удобства одной команды.
+    sleep 2
+    $SUDO reboot
+    exit 0
+}
+
+# Маркер возобновления — пары КЛЮЧ=значение, а не JSON: он обязан читаться
+# ДО того, как на машине что-либо появится, а в базовой системе нет ни jq,
+# ни python3.
+write_resume() {
+    {
+        printf 'VANTAGE=%s\n'       "$VANTAGE"
+        printf 'DEPTH=%s\n'         "$DEPTH"
+        printf 'IMPACT=%s\n'        "$IMPACT"
+        printf 'TARGET_LABEL=%s\n'  "$TARGET_LABEL"
+        printf 'TARGET_ADDR=%s\n'   "$TARGET_ADDR"
+        printf 'NO_NETWORK=%s\n'    "$NO_NETWORK"
+        # ⚠ Пишем ФАКТИЧЕСКОЕ значение, а не «да»: перезагрузка бывает и без
+        # обновления — например, когда ядро приехало раньше и просто ждёт.
+        # Зашитое «да» отправляло бы в отчёт неправду (поймано 31.08.2026).
+        printf 'UPDATED=%s\n'       "$UPDATED"
+        printf 'UPGRADE_COUNT=%s\n' "$UPGRADE_COUNT"
+        printf 'KERNEL_BEFORE=%s\n' "$KERNEL_BEFORE"
+    } >"$RESUME_FILE"
+}
+
+read_resume() {
+    [ -f "$RESUME_FILE" ] || return 0
+    # shellcheck disable=SC1090
+    . "$RESUME_FILE"
+    say ""
+    say "продолжаю прерванный прогон: площадка «$VANTAGE»."
+    if [ "$UPDATED" = "да" ]; then
+        say "  система была обновлена перед перезагрузкой, повторно обновлять не буду"
+    else
+        say "  система не обновлялась; перезагрузка была нужна ради уже установленного ядра"
+    fi
+    say "  ядро до перезагрузки: $KERNEL_BEFORE, сейчас: $(uname -r)"
+    DEPTH_SET=1
+    RESUMED=1
+}
+
+# --- 3. Docker: найти, поставить или отказаться (В-12) -----------------------
+ensure_docker() {
+    if docker info >/dev/null 2>&1; then
+        DOCKER_OWNED="нет"; say "Docker уже установлен — трогать его не буду."
+        return 0
+    fi
+    if [ -n "$SUDO" ] && $SUDO docker info >/dev/null 2>&1; then
+        DOCKER_OWNED="нет"; say "Docker уже установлен (через sudo)."
+        return 0
+    fi
+    command -v apt-get >/dev/null 2>&1 \
+        || die "нужен Docker, а поставить его нечем: apt на этой машине нет.
+     Установите Docker вручную и запустите снова."
+    say ""
+    say "Docker не найден. Он обязателен: все измерители приезжают в образе,"
+    say "иначе их пришлось бы ставить пакетами прямо на вашу машину."
+    ask "Установить Docker (5 пакетов, ~350-450 МБ)?" "нет" "$ASSUME_DOCKER" \
+        || die "без Docker замер невозможен."
+    say "ставлю Docker…"
+    # ⚠ docker-cli ОБЯЗАТЕЛЕН отдельно: в Debian 13 пакет docker.io несёт только
+    # демон, а клиент вынесен в docker-cli и стоит лишь в Recommends. Без него
+    # демон есть, а команды docker нет.
+    DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --no-install-recommends \
+        docker.io docker-cli >/tmp/vpsbench-docker.log 2>&1 \
+        || { tail -5 /tmp/vpsbench-docker.log; die "не удалось поставить Docker."; }
+    docker info >/dev/null 2>&1 || $SUDO docker info >/dev/null 2>&1 \
+        || die "Docker поставлен, но демон не отвечает."
+    DOCKER_OWNED="да"
+    say "Docker установлен. После замера он будет снят, раз его тут не было."
+}
+
+dk() { if docker info >/dev/null 2>&1; then docker "$@"; else $SUDO docker "$@"; fi; }
+
+# --- 4. Образ ----------------------------------------------------------------
+pull_image() {
+    say "тяну образ (~190 МБ)…"
+    dk pull "$IMAGE" >/dev/null 2>&1 \
+        || die "не удалось получить образ.
+     Проверьте, что с этой машины доступен ghcr.io:
+       curl -sS -o /dev/null -w '%{http_code}\\n' https://ghcr.io/v2/
+     Ожидается 401 — это значит, что реестр отвечает."
+}
+
+# --- 5. Вопросы о замере -----------------------------------------------------
+ask_details() {
+    if [ -z "$VANTAGE" ]; then
+        # ⚠ hostname по умолчанию НЕ подставляется: имя машины не должно попадать
+        # в отчёт, который потом кому-то показывают.
+        local d="vps-$(date -u +%Y%m%d)"
+        VANTAGE="$(askline "Метка площадки (в отчёте вместо имени машины) [$d]: ")"
+        [ -n "$VANTAGE" ] || VANTAGE="$d"
+    fi
+    if [ "$DEPTH" = "quick" ] \
+       && ask "Полная приёмка (~35-40 мин)? Иначе быстрая проверка (~5 мин)" "нет" ""; then
+        DEPTH="full"
+    fi
+    if [ "$NO_NETWORK" = "0" ] && [ -z "$TARGET_ADDR" ]; then
+        cat <<'EOF'
+
+  Канал меряется между ДВУМЯ машинами. Вторая не обязана быть VPS —
+  подойдёт и ваш ноутбук: на нём запускается  bash run.sh --agent
+EOF
+        if ask "Есть вторая машина с поднятой приёмной стороной?" "нет" ""; then
+            TARGET_ADDR="$(askline "  её адрес: ")"
+            TARGET_LABEL="$(askline "  метка для отчёта (адрес в отчёт НЕ попадёт): ")"
+            [ -n "$TARGET_ADDR" ] && [ -n "$TARGET_LABEL" ] || {
+                say "  адрес или метка пустые — канал мерить не буду"
+                TARGET_ADDR=""; NO_NETWORK=1; }
+        else
+            NO_NETWORK=1
+        fi
+    fi
+}
+
+# --- 6. Прогон ---------------------------------------------------------------
+# ⚠ Замок от второго прогона в тот же каталог. Без него два запуска пишут в одни
+# файлы: метрики задваиваются, дисковые пробы мешают друг другу, и результат
+# выглядит нормальным отчётом, будучи мусором. Проверено 31.08.2026 — получилось
+# 50 строк метрик вместо 41 и 22 дубликата.
+# `mkdir` выбран намеренно: он атомарен на любой файловой системе, в отличие от
+# проверки «файла нет — создать», между которыми успевает вклиниться второй запуск.
+lock_acquire() {
+    if ! mkdir "$REPORT_DIR/.lock" 2>/dev/null; then
+        local who; who="$(cat "$REPORT_DIR/.lock/pid" 2>/dev/null || echo '?')"
+        die "в этот каталог уже идёт замер (процесс $who): $REPORT_DIR
+     Дождитесь его окончания либо, если процесса уже нет, удалите замок:
+       rm -rf '$REPORT_DIR/.lock'"
+    fi
+    echo "$$" >"$REPORT_DIR/.lock/pid"
+    # Замок снимается при любом выходе, включая Ctrl-C и ошибку.
+    trap 'rm -rf "$REPORT_DIR/.lock"' EXIT INT TERM
+}
+
+run_battery() {
+    REPORT_DIR="$HOME/vpsbench-report-$VANTAGE"
+    mkdir -p "$REPORT_DIR" || die "не могу создать $REPORT_DIR"
+    lock_acquire
+
+    # Цели передаются файлом поверх примерного из образа: соответствие
+    # «метка → адрес» остаётся на машине, в отчёт идёт только метка.
+    if [ -n "$TARGET_ADDR" ]; then
+        printf '%s %s 5201 2112 15201\n' "$TARGET_LABEL" "$TARGET_ADDR" \
+            >"$REPORT_DIR/targets.conf"
+    else
+        : >"$REPORT_DIR/targets.conf"
+    fi
+
+    local skip=""
+    [ "$NO_NETWORK" = "1" ] && skip="--skip network"
+
+    # Маркер снимается ЗДЕСЬ, когда замер уже точно стартует: иначе третий запуск
+    # счёл бы себя продолжением, а второй — потерял бы ответы при сбое до старта.
+    rm -f "$RESUME_FILE"
+    say ""
+    say "замер пошёл. Это надолго — не закрывайте терминал до конца."
+    # shellcheck disable=SC2086
+    dk run --rm --network host --privileged \
+        -v "$REPORT_DIR:/out" \
+        -v "$REPORT_DIR/targets.conf:/opt/vpsbench/tool/targets.conf:ro" \
+        -v /etc/os-release:/host/etc/os-release:ro \
+        -v /etc/timezone:/host/etc/timezone:ro \
+        -v /var/lib/dpkg:/host/var/lib/dpkg:ro \
+        -v /sys/fs/cgroup:/host/sys/fs/cgroup:ro \
+        "$IMAGE" \
+        bash /opt/vpsbench/tool/vpsbench.sh \
+            --vantage "$VANTAGE" --impact "$IMPACT" --depth "$DEPTH" \
+            --host-root /host --outdir /out/raw-run --no-deps $skip \
+            --meta "run.image_digest=$IMAGE" \
+            --meta "tool.release_tag=$RELEASE_TAG" \
+            --meta "system.upgraded=$UPDATED" \
+            --meta "system.upgrade_packages=$UPGRADE_COUNT" \
+            --meta "system.kernel_before=$KERNEL_BEFORE" \
+            --meta "system.kernel_pending=$(kernel_pending)" \
+        || die "замер завершился ошибкой. Сырьё, если оно есть: $REPORT_DIR/raw-run"
+}
+
+# --- 7. Отчёт ----------------------------------------------------------------
+build_report() {
+    say "собираю паспорт…"
+    dk run --rm -v "$REPORT_DIR:/out" "$IMAGE" sh -c \
+        "python3 /opt/vpsbench/assemble.py /out/raw-run --out /out/$VANTAGE.md --json /out/$VANTAGE.json \
+         && mkdir -p /out/.j && cp /out/$VANTAGE.json /out/.j/ \
+         && python3 /opt/vpsbench/dashboard/build.py /out/.j --out /out/$VANTAGE.html \
+         && rm -rf /out/.j" >/dev/null 2>&1 \
+        || say "  ⚠ паспорт собрать не удалось; сырьё сохранено в $REPORT_DIR/raw-run"
+}
+
+# --- 8. Уборка ---------------------------------------------------------------
+cleanup() {
+    [ "$KEEP_IMAGE" = "1" ] || { say "убираю образ…"; dk rmi "$IMAGE" >/dev/null 2>&1 || true; }
+    if [ "$DOCKER_OWNED" = "да" ]; then
+        say "снимаю Docker — его на машине не было до запуска…"
+        DEBIAN_FRONTEND=noninteractive $SUDO apt-get purge -y \
+            docker.io docker-cli containerd runc tini >/dev/null 2>&1 || true
+        $SUDO rm -rf /var/lib/docker /var/lib/containerd
+        say "  ⚠ сетевой мост docker0 и правила iptables исчезнут после перезагрузки:"
+        say "    это состояние ядра, а не файлы на диске."
+    fi
+    rm -f "$REPORT_DIR/targets.conf"
+    [ "$PURGE" = "1" ] && { rm -rf "$REPORT_DIR"; say "отчёты удалены по --purge"; }
+}
+
+summary() {
+    cat <<EOF
+
+────────────────────────────────────────────────────────────────────────
+  ГОТОВО
+
+  Паспорт площадки:  $REPORT_DIR/$VANTAGE.md
+  Для чтения глазами: $REPORT_DIR/$VANTAGE.html
+  Машиночитаемый:     $REPORT_DIR/$VANTAGE.json
+  Сырьё замера:       $REPORT_DIR/raw-run
+
+  На машине осталось: только эта папка$([ "$DOCKER_OWNED" = "нет" ] && echo " (Docker был тут до нас — не тронут)")
+  Сам файл run.sh лежит там, откуда вы его запустили: удалите вручную.
+────────────────────────────────────────────────────────────────────────
+EOF
+}
+
+# --- приёмная сторона (агент) ------------------------------------------------
+# Поднимается ТЕМ ЖЕ образом и без единого пакета на хосте. --privileged здесь
+# НЕ нужен: приёмная сторона железо не читает, только принимает трафик.
+# Ctrl-C убивает контейнер вместе со всеми процессами — снимать нечего.
+AGENT_NAME="vpsbench-agent"
+
+agent_mode() {
+    precheck_env
+    ensure_docker
+    pull_image
+    if dk ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$AGENT_NAME"; then
+        die "приёмная сторона уже запущена (контейнер $AGENT_NAME).
+     Остановить:  bash $0 --agent-stop"
+    fi
+    cat <<'EOF'
+
+  Поднимаю приёмную сторону. Она слушает три порта:
+      5201/tcp   iperf3  — пропускная способность
+      2112/udp   irtt    — задержка, джиттер, потери
+     15201/tcp   socat   — то же через TLS, для сравнения с открытым каналом
+
+  Пока она работает, на ВТОРОЙ машине запустите замер и укажите адрес этой.
+  Ctrl-C здесь останавливает всё: контейнер удаляется вместе с процессами.
+
+  ⚠ Если связь с этой машиной оборвётся, приёмная сторона может остаться
+    работать. Тогда остановите её отдельно:   bash run.sh --agent-stop
+
+EOF
+    # ⚠ Снятие контейнера по выходу. Ctrl-C докер пробрасывает сам, но если клиент
+    # умрёт жёстко — оборвался ssh, закрыли терминал — контейнер продолжит работать
+    # и слушать три порта (ФАКТ, проверено 01.09.2026: после убийства клиента
+    # порты остались открыты). Ловушка закрывает обычные случаи; на самый жёсткий
+    # (SIGKILL) остаётся `--agent-stop`, о чём сказано ниже.
+    trap 'dk rm -f "$AGENT_NAME" >/dev/null 2>&1; echo; say "приёмная сторона снята."' \
+        EXIT INT TERM HUP
+
+    # ⚠ Проверяем не «порт слушается», а «порт отвечает»: сокет может быть открыт,
+    # а служба не работать. Заодно это снимает зависимость от `ss`, которого
+    # в образе нет (ФАКТ, проверено 01.09.2026).
+    # ⚠ Контейнер запускается в ФОНЕ, и мы ждём его через `wait`. Иначе ловушка
+    # не срабатывает вовсе: bash откладывает обработчик сигнала до завершения
+    # текущей команды переднего плана, а `docker run` тут не завершается никогда
+    # (проверено 01.09.2026: после kill -TERM контейнер и порты оставались живы).
+    dk run --rm --name "$AGENT_NAME" --network host "$IMAGE" bash -c '
+        /opt/vpsbench/tool/agent/agent-up.sh >/dev/null 2>&1
+        sleep 1
+        echo "проверяю, что порты действительно отвечают:"
+        iperf3 -c 127.0.0.1 -p 5201 -t 1 >/dev/null 2>&1 \
+            && echo "  iperf3  5201/tcp  — отвечает" || echo "  iperf3  5201/tcp  — НЕ ОТВЕЧАЕТ"
+        irtt client -d 1s -i 200ms 127.0.0.1:2112 >/dev/null 2>&1 \
+            && echo "  irtt    2112/udp  — отвечает" || echo "  irtt    2112/udp  — НЕ ОТВЕЧАЕТ"
+        openssl s_client -connect 127.0.0.1:15201 </dev/null >/dev/null 2>&1 \
+            && echo "  socat  15201/tcp  — отвечает" || echo "  socat  15201/tcp  — НЕ ОТВЕЧАЕТ"
+        echo
+        echo "Приёмная сторона работает. Остановить — Ctrl-C."
+        tail -f /dev/null' &
+    AGENT_CLIENT_PID=$!
+    wait "$AGENT_CLIENT_PID"
+}
+
+agent_stop() {
+    if dk ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$AGENT_NAME"; then
+        dk rm -f "$AGENT_NAME" >/dev/null 2>&1
+        say "приёмная сторона остановлена."
+    else
+        say "приёмная сторона не запущена."
+    fi
+    # ⚠ Проверяем, что на ХОСТЕ ничего не осталось. Пакетный irtt в Debian приходит
+    # с включённой службой, слушающей UDP/2112 постоянно; в контейнере systemd нет,
+    # поэтому такой службы возникнуть не может — но утверждать это без проверки
+    # нельзя, поэтому проверяем.
+    local left=0
+    for p in 5201 2112 15201; do
+        if command -v ss >/dev/null 2>&1 && ss -lntu 2>/dev/null | grep -q ":$p\b"; then
+            say "  ⚠ порт $p на хосте всё ещё слушается — это НЕ наш контейнер, разберитесь"
+            left=1
+        fi
+    done
+    [ "$left" = "0" ] && say "  портов 5201/2112/15201 на хосте не слушает никто."
+}
+
+# --- самопроверка скрипта ----------------------------------------------------
+selftest() {
+    local p=0 f=0
+    t() { if [ "$2" = "$3" ]; then p=$((p+1)); printf '  [ok]   %s\n' "$1"
+          else f=$((f+1)); printf '  [СБОЙ] %s: «%s» вместо «%s»\n' "$1" "$2" "$3"; fi; }
+    echo "=== самопроверка run.sh ==="
+    t "digest прибит, а не тег" "$(printf '%s' "$IMAGE" | grep -c '@sha256:')" "1"
+    t "в образе нет плавающего тега" "$(printf '%s' "$IMAGE" | grep -c ':0\.3\.0$')" "0"
+    t "ответ 'да' форсируется флагом" "$(ask 'x' 'нет' 'yes' && echo да || echo нет)" "да"
+    t "ответ 'нет' форсируется флагом" "$(ask 'x' 'да' 'no' && echo да || echo нет)" "нет"
+    t "умолчание при отсутствии терминала" \
+      "$(ask 'x' 'нет' '' </dev/null 2>/dev/null && echo да || echo нет)" "нет"
+    t "разбор --target" "$(TARGET_LABEL=''; TARGET_ADDR=''; set -- --target peer:203.0.113.9
+        TARGET_LABEL="${2%%:*}"; TARGET_ADDR="${2#*:}"; echo "$TARGET_LABEL/$TARGET_ADDR")" \
+      "peer/203.0.113.9"
+
+    # --- разбор плана обновления ---
+    local p_en p_ru p_none
+    p_en="Reading package lists...
+Inst libc6 [2.41-1] (2.41-2 Debian:13/stable [amd64])
+Inst linux-image-amd64 [6.12.101] (6.12.107 Debian:13/stable [amd64])
+Inst curl [8.14.1] (8.14.2 Debian:13/stable [amd64])
+Conf libc6 (2.41-2 Debian:13/stable [amd64])
+3 upgraded, 0 newly installed, 0 to remove and 0 not upgraded."
+    # ⚠ Тот же план, но с локализованной итоговой строкой. Ради этого случая якорь
+    # и берётся по '^Inst ', а не по «N upgraded»: перевод ломает счёт по итогу.
+    p_ru="Чтение списков пакетов…
+Inst libc6 [2.41-1] (2.41-2 Debian:13/stable [amd64])
+Inst linux-image-amd64 [6.12.101] (6.12.107 Debian:13/stable [amd64])
+Inst curl [8.14.1] (8.14.2 Debian:13/stable [amd64])
+обновлено 3, установлено 0 новых пакетов, для удаления отмечено 0 пакетов."
+    p_none="Reading package lists...
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded."
+    t "план: сколько пакетов"            "$(apt_plan_count  "$p_en")"   "3"
+    t "план: ядро среди них"             "$(apt_plan_kernel "$p_en")"   "1"
+    t "локализованный вывод не ломает счёт" "$(apt_plan_count "$p_ru")" "3"
+    t "ядро в локализованном выводе"     "$(apt_plan_kernel "$p_ru")"   "1"
+    t "обновлять нечего"                 "$(apt_plan_count  "$p_none")" "0"
+    t "ждущее ядро опознаётся"           "$(kernel_newer_installed 6.12.107 6.12.74)" "6.12.107"
+    t "одинаковые ядра — ничего не ждёт" "$(kernel_newer_installed 6.12.74 6.12.74)"  ""
+    t "пустой список ядер не ломает"     "$(kernel_newer_installed '' 6.12.74)"       ""
+    t "ядра нет, когда его нет"          "$(apt_plan_kernel "$p_none")" "0"
+    echo "=== пройдено: $p, сбоев: $f ==="
+    [ "$f" -eq 0 ]
+}
+
+# --- основной ход ------------------------------------------------------------
+case "${ACTION:-run}" in
+    selftest)   selftest; exit $? ;;
+    agent)      agent_mode; exit $? ;;
+    agent-stop) agent_stop; exit $? ;;
+esac
+
+precheck_env
+# Возобновление читается ДО вопросов: после перезагрузки пользователь не должен
+# отвечать на них заново.
+RESUMED=0
+read_resume
+if [ "$RESUMED" = "0" ]; then
+    confirm_load
+    ask_details
+    # Обновление идёт ПЕРЕД установкой Docker и выкачкой образа: если дело кончится
+    # перезагрузкой, незачем тратить на это время и место.
+    offer_update
+fi
+ensure_docker
+pull_image
+run_battery
+build_report
+cleanup
+summary

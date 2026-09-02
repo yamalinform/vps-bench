@@ -30,6 +30,11 @@ bash run.sh --detach --yes --install-docker yes --depth full --vantage "my-vps-1
 * **Docker as the environment.** All the tools run inside a container. If Docker is not
   installed, the script offers to install it and removes it afterwards
   (if Docker was already there, it is left alone).
+* **It cleans up on any termination** where the shell is still alive: a refusal, Ctrl-C,
+  a dropped connection, an error mid-run. Exactly what was installed is removed, not a
+  guessed list of names. After `kill -9` or a power loss no handler can run, so the
+  cleanup moves to the next run: it recognises its own Docker and removes it. A Docker
+  that was not ours is never touched.
 * **Privileges.** The container runs with `--privileged` and `--network host`: that is
   required for direct access to the host disk and network, otherwise the container would
   be measured instead of the server.

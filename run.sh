@@ -19,7 +19,7 @@ set -u
 # под тем же тегом через полгода окажется другой образ с другими версиями
 # измерителей, и разница в числах станет необъяснимой.
 IMAGE="ghcr.io/yamalinform/vps-bench@sha256:ecb0cf3779bfacc846dcb1e5fb92d78568ce49cfc544ccb6150d0db1d0ead83d"
-RELEASE_TAG="0.3.5"
+RELEASE_TAG="0.3.6"
 
 # --- состояние сценария ------------------------------------------------------
 # Все ответы имеют безопасное умолчание: щадящий режим, быстрая проверка, без сети.
@@ -39,6 +39,13 @@ REPORT_DIR=""
 UPDATED="нет"; UPGRADE_COUNT=0; KERNEL_NEW=0; REBOOT_REASON=""
 KERNEL_BEFORE="$(uname -r)"
 RESUME_FILE="$HOME/.vpsbench-resume.env"
+# ⚠ Список пакетов, которые поставили МЫ. Файл, а не переменная: он должен пережить
+# и смерть процесса, и перезагрузку. Он же — признак владения: если Docker на машине
+# есть, а этого файла нет, значит Docker чужой и трогать его нельзя.
+DOCKER_PKGS_FILE="$HOME/.vpsbench-docker.pkgs"
+CLEANUP_ARMED=0        # есть ли что убирать (взведено после установки/проверки Docker)
+RUN_CONTAINER=""       # имя контейнера замера: нужно, чтобы снять его по сигналу
+INTENTIONAL_EXIT=0     # выход, после которого мы вернёмся: --detach и перезагрузка
 SUDO=""; [ "$(id -u)" = "0" ] || SUDO="sudo"
 
 die() { printf '\nrun.sh: %s\n' "$*" >&2; exit 1; }
@@ -104,6 +111,20 @@ ask() { # <вопрос> <да|нет — умолчание> [<ответ, за
         *)  printf 'не понял ответа, беру умолчание: %s\n' "$def" >&2
             [ "$def" = "да" ] && return 0 || return 1 ;;
     esac
+}
+
+# Что добавилось между двумя срезами dpkg. Вынесено ради теста.
+# ⚠ LC_ALL=C обязателен: в локали пользователя порядок сортировки другой, и comm
+# начинает выдавать мусор на тех же данных.
+pkg_added() { # <срез ДО> <срез ПОСЛЕ>
+    LC_ALL=C comm -13 "$1" "$2" 2>/dev/null
+}
+
+# Наш ли это Docker. Источник истины — манифест, а НЕ факт наличия Docker:
+# машина могла остаться с нашим Docker после прогона, убитого kill -9, и тогда
+# он наш, хотя и стоит заранее. И наоборот: чужой Docker манифеста не имеет.
+docker_ownership() { # <docker отвечает: да|нет> <манифест есть: да|нет>
+    if [ "$2" = "да" ]; then printf 'да'; else printf 'нет'; fi
 }
 
 # Выбросить один флаг из списка аргументов. Вынесено отдельно ради теста:
@@ -353,6 +374,8 @@ EOF
 EOF
     # ⛔ Ни systemd-юнита, ни cron для автопродолжения: это постоянный след
     # на чужой машине ради удобства одной команды.
+    # ⚠ Выход намеренный, с расчётом вернуться по маркеру: убирать нечего и нельзя.
+    INTENTIONAL_EXIT=1
     sleep 2
     $SUDO reboot
     exit 0
@@ -414,12 +437,20 @@ read_resume() {
 
 # --- 3. Docker: найти, поставить или отказаться (В-12) -----------------------
 ensure_docker() {
-    if docker info >/dev/null 2>&1; then
-        DOCKER_OWNED="нет"; say "Docker уже установлен — трогать его не буду."
-        return 0
-    fi
-    if [ -n "$SUDO" ] && $SUDO docker info >/dev/null 2>&1; then
-        DOCKER_OWNED="нет"; say "Docker уже установлен (через sudo)."
+    local have="нет" manifest="нет"
+    docker info >/dev/null 2>&1 && have="да"
+    [ "$have" = "нет" ] && [ -n "$SUDO" ] && $SUDO docker info >/dev/null 2>&1 && have="да"
+    [ -s "$DOCKER_PKGS_FILE" ] && manifest="да"
+    if [ "$have" = "да" ]; then
+        DOCKER_OWNED="$(docker_ownership "$have" "$manifest")"
+        if [ "$DOCKER_OWNED" = "да" ]; then
+            # Прошлый прогон умер, не убрав за собой: kill -9, OOM, потеря питания.
+            # Обработчик выхода в таких случаях не отрабатывает по определению,
+            # поэтому уборка переносится на следующий запуск — вот он.
+            say "Docker остался от прошлого прогона этого инструмента — сниму в конце."
+        else
+            say "Docker уже установлен — трогать его не буду."
+        fi
         return 0
     fi
     command -v apt-get >/dev/null 2>&1 \
@@ -431,6 +462,8 @@ ensure_docker() {
     ask "Установить Docker (5 пакетов, ~350-450 МБ)?" "нет" "$ASSUME_DOCKER" \
         || die "без Docker замер невозможен."
     say "ставлю Docker…"
+    dpkg-query -W -f'${Package}
+' 2>/dev/null | LC_ALL=C sort >/tmp/vpsbench-pkgs-before
     # ⚠ docker-cli ОБЯЗАТЕЛЕН отдельно: в Debian 13 пакет docker.io несёт только
     # демон, а клиент вынесен в docker-cli и стоит лишь в Recommends. Без него
     # демон есть, а команды docker нет.
@@ -440,7 +473,14 @@ ensure_docker() {
     docker info >/dev/null 2>&1 || $SUDO docker info >/dev/null 2>&1 \
         || die "Docker поставлен, но демон не отвечает."
     DOCKER_OWNED="да"
-    say "Docker установлен. После замера он будет снят, раз его тут не было."
+    # ⚠ Снимается ровно то, что добавила установка, а не список имён: на другом
+    # дистрибутиве набор зависимостей другой. autoremove для этого не годится
+    # и запрещён — 28.08.2026 он снёс 49 посторонних пакетов, включая cloud-init.
+    dpkg-query -W -f'${Package}
+' 2>/dev/null | LC_ALL=C sort >/tmp/vpsbench-pkgs-after
+    pkg_added /tmp/vpsbench-pkgs-before /tmp/vpsbench-pkgs-after >"$DOCKER_PKGS_FILE"
+    rm -f /tmp/vpsbench-pkgs-before /tmp/vpsbench-pkgs-after
+    say "Docker установлен ($(wc -l <"$DOCKER_PKGS_FILE" | tr -d ' ') пакет(ов)). После замера будет снят."
 }
 
 dk() { if docker info >/dev/null 2>&1; then docker "$@"; else $SUDO docker "$@"; fi; }
@@ -501,8 +541,8 @@ lock_acquire() {
        rm -rf '$REPORT_DIR/.lock'"
     fi
     echo "$$" >"$REPORT_DIR/.lock/pid"
-    # Замок снимается при любом выходе, включая Ctrl-C и ошибку.
-    trap 'rm -rf "$REPORT_DIR/.lock"' EXIT INT TERM
+    # ⚠ Своей ловушки здесь больше нет: она переопределяла общий обработчик выхода,
+    # и уборка Docker переставала срабатывать. Замок снимает on_terminate.
 }
 
 run_battery() {
@@ -527,8 +567,14 @@ run_battery() {
     rm -f "$RESUME_FILE"
     say ""
     say "замер пошёл. Это надолго — не закрывайте терминал до конца."
+    # ⚠ Контейнер запускается в ФОНЕ, и мы ждём его через `wait`. Иначе обработчик
+    # сигнала не срабатывает, пока не закончится команда переднего плана: bash
+    # откладывает обработку до её завершения. Проверено 02.09.2026 — `kill -TERM`
+    # доходил до уборки только через несколько минут, когда заканчивался модуль.
+    # Та же грабля уже была у приёмной стороны (01.09.2026) и лечится так же.
+    RUN_CONTAINER="vpsbench-run-$$"
     # shellcheck disable=SC2086
-    dk run --rm --network host --privileged \
+    dk run --rm --name "$RUN_CONTAINER" --network host --privileged \
         -v "$REPORT_DIR:/out" \
         -v "$REPORT_DIR/targets.conf:/opt/vpsbench/tool/targets.conf:ro" \
         -v /etc/os-release:/host/etc/os-release:ro \
@@ -544,8 +590,11 @@ run_battery() {
             --meta "system.upgraded=$UPDATED" \
             --meta "system.upgrade_packages=$UPGRADE_COUNT" \
             --meta "system.kernel_before=$KERNEL_BEFORE" \
-            --meta "system.kernel_pending=$(kernel_pending)" \
+            --meta "system.kernel_pending=$(kernel_pending)" &
+    RUN_PID=$!
+    wait "$RUN_PID" \
         || die "замер завершился ошибкой. Сырьё, если оно есть: $REPORT_DIR/raw-run"
+    RUN_CONTAINER=""
 }
 
 # --- 7. Отчёт ----------------------------------------------------------------
@@ -560,16 +609,77 @@ build_report() {
 }
 
 # --- 8. Уборка ---------------------------------------------------------------
+# Работает ли на машине ЕЩЁ ОДИН прогон. Замок защищает один каталог отчёта,
+# но два прогона с разными метками законны, и первый закончившийся не должен
+# сносить Docker из-под второго.
+others_active() {
+    local d pid
+    for d in "$HOME"/vpsbench-report-*/.lock/pid; do
+        [ -f "$d" ] || continue
+        pid="$(cat "$d" 2>/dev/null)"
+        [ -n "$pid" ] || continue
+        [ "$pid" = "$$" ] && continue
+        kill -0 "$pid" 2>/dev/null && { printf '%s' "$pid"; return 0; }
+    done
+    return 0
+}
+
+# Снять ровно то, что установили мы. Одна реализация на все пути уборки.
+purge_docker() {
+    local other; other="$(others_active)"
+    if [ -n "$other" ]; then
+        say "  ⚠ Docker НЕ снимаю: на машине идёт ещё один замер (процесс $other)."
+        say "    Он снимет за собой сам, когда закончит."
+        return 0
+    fi
+    local pkgs n
+    if [ -s "$DOCKER_PKGS_FILE" ]; then
+        pkgs="$(tr '
+' ' ' <"$DOCKER_PKGS_FILE")"
+        n="$(wc -l <"$DOCKER_PKGS_FILE" | tr -d ' ')"
+        say "снимаю Docker — его на машине не было до запуска ($n пакет(ов))…"
+    else
+        pkgs="docker.io docker-cli containerd runc tini"
+        say "снимаю Docker — списка установленного нет, снимаю набор по умолчанию…"
+    fi
+    # shellcheck disable=SC2086
+    DEBIAN_FRONTEND=noninteractive $SUDO apt-get purge -y $pkgs >/dev/null 2>&1 || true
+    $SUDO rm -rf /var/lib/docker /var/lib/containerd
+    rm -f "$DOCKER_PKGS_FILE"
+    say "  ⚠ сетевой мост docker0 и правила iptables исчезнут после перезагрузки:"
+    say "    это состояние ядра, а не файлы на диске."
+}
+
+# ⚠ Уборка при ЛЮБОМ завершении, где оболочка ещё жива: отказ через die, Ctrl-C,
+# kill, обрыв связи, ошибка посреди замера. Приёмка 01.09.2026 показала, что после
+# отказа «не удалось получить образ» Docker оставался установленным, а пользователю
+# об этом не говорили: замер не состоялся, а машина изменилась.
+#
+# ⛔ Чего этот обработчик НЕ покрывает и покрыть не может: kill -9, OOM-killer,
+# потеря питания, паника ядра. Там обработчиков не остаётся по определению.
+# Для этих случаев работает второй рубеж: манифест на диске переживает всё,
+# и следующий запуск опознаёт Docker как наш и снимает его (см. ensure_docker).
+on_terminate() {
+    local code=$?
+    trap - EXIT INT TERM HUP        # чтобы обработчик не сработал повторно
+    [ -n "${REPORT_DIR:-}" ] && rm -rf "$REPORT_DIR/.lock"
+    if [ "$INTENTIONAL_EXIT" = "1" ]; then exit "$code"; fi
+    if [ "$CLEANUP_ARMED" = "1" ]; then
+        say ""
+        say "прогон завершился, не дойдя до конца — убираю за собой."
+        # Контейнер замера снимается ПЕРВЫМ: он держит нагрузку на машине,
+        # и оставлять его работать после ухода оболочки нельзя.
+        [ -n "$RUN_CONTAINER" ] && dk rm -f "$RUN_CONTAINER" >/dev/null 2>&1
+        [ "$KEEP_IMAGE" = "1" ] || dk rmi "$IMAGE" >/dev/null 2>&1 || true
+        [ "$DOCKER_OWNED" = "да" ] && purge_docker
+    fi
+    exit "$code"
+}
+
 cleanup() {
     [ "$KEEP_IMAGE" = "1" ] || { say "убираю образ…"; dk rmi "$IMAGE" >/dev/null 2>&1 || true; }
-    if [ "$DOCKER_OWNED" = "да" ]; then
-        say "снимаю Docker — его на машине не было до запуска…"
-        DEBIAN_FRONTEND=noninteractive $SUDO apt-get purge -y \
-            docker.io docker-cli containerd runc tini >/dev/null 2>&1 || true
-        $SUDO rm -rf /var/lib/docker /var/lib/containerd
-        say "  ⚠ сетевой мост docker0 и правила iptables исчезнут после перезагрузки:"
-        say "    это состояние ядра, а не файлы на диске."
-    fi
+    [ "$DOCKER_OWNED" = "да" ] && purge_docker
+    CLEANUP_ARMED=0   # штатная уборка выполнена, обработчику делать нечего
     rm -f "$REPORT_DIR/targets.conf"
     [ "$PURGE" = "1" ] && { rm -rf "$REPORT_DIR"; say "отчёты удалены по --purge"; }
 }
@@ -739,6 +849,30 @@ Inst curl [8.14.1] (8.14.2 Debian:13/stable [amd64])
     t "пустой список ядер не ломает"     "$(kernel_newer_installed '' 6.12.74)"       ""
     t "ядра нет, когда его нет"          "$(apt_plan_kernel "$p_none")" "0"
 
+    # --- манифест и владение Docker (приёмка 02.09.2026) ---
+    local d; d="$(mktemp -d)"
+    printf 'aaa
+bbb
+' > "$d/before"
+    printf 'aaa
+bbb
+docker.io
+runc
+' > "$d/after"
+    t "добавленные пакеты опознаются" "$(pkg_added "$d/before" "$d/after" | tr '
+' ' ')"       "docker.io runc "
+    # ⚠ Отрицательный: исчезнувший пакет добавленным не является, иначе уборка
+    # попыталась бы снести то, чего мы не ставили.
+    printf 'aaa
+' > "$d/fewer"
+    t "исчезнувший пакет не считается добавленным" "$(pkg_added "$d/before" "$d/fewer")" ""
+    rm -rf "$d"
+    # ⚠ Владение определяется МАНИФЕСТОМ, а не наличием Docker: машина могла остаться
+    # с нашим Docker после kill -9, и тогда он наш, хотя и стоял до запуска.
+    t "чужой Docker не наш"              "$(docker_ownership да нет)"  "нет"
+    t "Docker с манифестом — наш"        "$(docker_ownership да да)"   "да"
+    t "манифест решает и без Docker"     "$(docker_ownership нет да)"  "да"
+
     # --- перезапуск себя же (приёмка 01.09.2026) ---
     t "--detach выбрасывается при перезапуске"       "$(strip_flag --detach --vantage a --detach --depth full | tr '
 ' ' ')"       "--vantage a --depth full "
@@ -791,6 +925,9 @@ EOF
     say "запускаю отсоединённо: обрыв связи прогон уже не убьёт."
     say "⚠ вопросы в этом режиме не задаются, берутся безопасные ответы"
     say "  (не обновлять, не перезагружать, не ставить Docker без явного флага)."
+    # ⚠ Родитель выходит через две секунды, а ребёнок меряет сорок минут. Без этой
+    # пометки обработчик выхода снёс бы Docker и образ ИЗ-ПОД работающего замера.
+    INTENTIONAL_EXIT=1
     setsid bash "$SELF" "${detach_args[@]}" >"$DETACH_LOG" 2>&1 </dev/null &
     sleep 2
     cat <<EOF
@@ -816,6 +953,9 @@ if [ "$RESUMED" = "0" ]; then
     offer_update
 fi
 ensure_docker
+# С этого места есть что убирать: либо мы поставили Docker, либо сейчас притянем образ.
+CLEANUP_ARMED=1
+trap on_terminate EXIT INT TERM HUP
 pull_image
 run_battery
 build_report
